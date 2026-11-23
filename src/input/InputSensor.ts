@@ -50,6 +50,11 @@ export class InputSensor {
   }
 
   private readonly handleKeyDown = (e: KeyboardEvent): void => {
+    // Игнорируем автоповтор зажатой клавиши, чтобы не забивать буфер поворотов
+    if (e.repeat) {
+      return;
+    }
+
     // Не перехватываем ввод в текстовых полях (например, имя игрока для рекорда)
     const target = e.target as HTMLElement | null;
     if (

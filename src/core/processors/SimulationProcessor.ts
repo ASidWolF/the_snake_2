@@ -157,6 +157,26 @@ export function createInitialSnapshot(
   );
 }
 
+const CORNER_FORGIVENESS_PROGRESS = 0.28;
+
+function getNeckBackwardDirection(segments: readonly GridPoint[]): Direction | null {
+  if (segments.length < 2) return null;
+  const head = segments[0]!;
+  const neck = segments[1]!;
+  let dx = neck.x - head.x;
+  let dy = neck.y - head.y;
+  if (dx > 1) dx = -1;
+  if (dx < -1) dx = 1;
+  if (dy > 1) dy = -1;
+  if (dy < -1) dy = 1;
+
+  if (dx === 1) return 'RIGHT';
+  if (dx === -1) return 'LEFT';
+  if (dy === 1) return 'DOWN';
+  if (dy === -1) return 'UP';
+  return null;
+}
+
 function enqueueDirection(
   state: GameSnapshot,
   direction: Direction
@@ -166,13 +186,56 @@ function enqueueDirection(
   }
 
   const queue = state.snake.directionQueue;
-  if (queue.length >= GRID_PROFILE.maxDirectionQueue) {
-    return { state, events: [] };
+
+  // Мгновенный поворот на углу (corner forgiveness):
+  // если игрок нажал поворот во время предстартового отсчёта или в первые 28% клетки,
+  // буфер пуст и змейка ещё идёт прямо от шеи — применяем направление сразу без лишней клетки!
+  const neckDir = getNeckBackwardDirection(state.snake.segments);
+  const stillStraight =
+    neckDir === null || state.snake.direction === OPPOSITE_DIRECTION[neckDir];
+  const canInstantPivot =
+    queue.length === 0 &&
+    stillStraight &&
+    (state.resumeCountdownSec > 0 || state.moveProgress <= CORNER_FORGIVENESS_PROGRESS);
+
+  if (canInstantPivot && direction !== state.snake.direction) {
+    const forbidden = neckDir ?? OPPOSITE_DIRECTION[state.snake.direction];
+    if (direction !== forbidden) {
+      return {
+        state: {
+          ...state,
+          snake: {
+            ...state.snake,
+            direction,
+          },
+        },
+        events: [],
+      };
+    }
   }
 
   const lastPlanned = queue[queue.length - 1] ?? state.snake.direction;
   if (direction === lastPlanned || direction === OPPOSITE_DIRECTION[lastPlanned]) {
     return { state, events: [] };
+  }
+
+  if (queue.length >= GRID_PROFILE.maxDirectionQueue) {
+    // Заменяем последний элемент очереди на свежий ввод игрока (если не 180° к предыдущему)
+    const prevPlanned =
+      queue.length >= 2 ? queue[queue.length - 2]! : state.snake.direction;
+    if (direction === prevPlanned || direction === OPPOSITE_DIRECTION[prevPlanned]) {
+      return { state, events: [] };
+    }
+    return {
+      state: {
+        ...state,
+        snake: {
+          ...state.snake,
+          directionQueue: [...queue.slice(0, -1), direction],
+        },
+      },
+      events: [],
+    };
   }
 
   return {
@@ -420,16 +483,11 @@ function executeSingleStep(state: GameSnapshot, events: GameEvent[]): GameSnapsh
   const prevSegments = state.snake.segments;
   const head = prevSegments[0]!;
 
-  // Извлекаем следующее направление из буфера ввода
-  let direction = state.snake.direction;
-  let directionQueue = state.snake.directionQueue;
-  if (directionQueue.length > 0) {
-    const queued = directionQueue[0]!;
-    directionQueue = directionQueue.slice(1);
-    if (queued !== OPPOSITE_DIRECTION[direction]) {
-      direction = queued;
-    }
-  }
+  // Текущий шаг всегда завершает движение в направлении snake.direction
+  // (синхронно с плавным скольжением головы к следующей клетке).
+  // Буфер directionQueue применяется сразу при приземлении для следующего шага.
+  const direction = state.snake.direction;
+  const directionQueue = state.snake.directionQueue;
 
   const vec = DIRECTION_VECTORS[direction];
   const nextHead = wrapPoint(head.x + vec.x, head.y + vec.y);
@@ -662,6 +720,18 @@ function executeSingleStep(state: GameSnapshot, events: GameEvent[]): GameSnapsh
     };
   }
 
+  // После приземления в новую клетку сразу подставляем следующий запланированный поворот
+  // в snake.direction (если буфер не пуст), чтобы следующий шаг и рендер сразу целились туда
+  let nextHeading = direction;
+  let remainingQueue = directionQueue;
+  if (remainingQueue.length > 0) {
+    const upcoming = remainingQueue[0]!;
+    if (upcoming !== OPPOSITE_DIRECTION[direction]) {
+      nextHeading = upcoming;
+      remainingQueue = remainingQueue.slice(1);
+    }
+  }
+
   return {
     ...state,
     score,
@@ -672,8 +742,8 @@ function executeSingleStep(state: GameSnapshot, events: GameEvent[]): GameSnapsh
     snake: {
       segments: newSegments,
       previousSegments: prevSegments,
-      direction,
-      directionQueue,
+      direction: nextHeading,
+      directionQueue: remainingQueue,
     },
     goodApples,
     badApples,

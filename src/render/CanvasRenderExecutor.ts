@@ -72,6 +72,9 @@ export class CanvasRenderExecutor implements IRenderExecutor {
   private soulSparkCooldown = 0;
   private goBannerSec = 0;
   private language: LanguageKey = 'ru';
+  private boardCacheCanvas: HTMLCanvasElement | null = null;
+  private boardCacheW = 0;
+  private boardCacheH = 0;
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
@@ -115,6 +118,30 @@ export class CanvasRenderExecutor implements IRenderExecutor {
     const boardH = this.cellSize * GRID_PROFILE.height;
     this.boardX = Math.floor((this.cssWidth - boardW) / 2);
     this.boardY = Math.floor((this.cssHeight - boardH) / 2);
+    this.rebuildBoardCache(boardW, boardH);
+  }
+
+  private rebuildBoardCache(bw: number, bh: number): void {
+    if (typeof document === 'undefined' || bw <= 0 || bh <= 0) return;
+    if (!this.boardCacheCanvas) {
+      this.boardCacheCanvas = document.createElement('canvas');
+    }
+    this.boardCacheCanvas.width = bw;
+    this.boardCacheCanvas.height = bh;
+    this.boardCacheW = bw;
+    this.boardCacheH = bh;
+
+    const c = this.boardCacheCanvas.getContext('2d');
+    if (!c) return;
+    const cs = this.cellSize;
+    const tileA = '#0a141d';
+    const tileB = '#0d1924';
+    for (let y = 0; y < GRID_PROFILE.height; y += 1) {
+      for (let x = 0; x < GRID_PROFILE.width; x += 1) {
+        c.fillStyle = (x + y) % 2 === 0 ? tileA : tileB;
+        c.fillRect(x * cs, y * cs, cs, cs);
+      }
+    }
   }
 
   handleEvent(event: GameEvent): void {
@@ -715,13 +742,15 @@ export class CanvasRenderExecutor implements IRenderExecutor {
     this.roundRect(ctx, bx, by, bw, bh, radius);
     ctx.clip();
 
-    const tileA = '#0a141d';
-    const tileB = '#0d1924';
-    for (let y = 0; y < GRID_PROFILE.height; y += 1) {
-      for (let x = 0; x < GRID_PROFILE.width; x += 1) {
-        ctx.fillStyle = (x + y) % 2 === 0 ? tileA : tileB;
-        ctx.fillRect(bx + x * cs, by + y * cs, cs, cs);
-      }
+    if (
+      this.boardCacheCanvas &&
+      this.boardCacheW === bw &&
+      this.boardCacheH === bh
+    ) {
+      ctx.drawImage(this.boardCacheCanvas, bx, by);
+    } else {
+      ctx.fillStyle = '#0b1620';
+      ctx.fillRect(bx, by, bw, bh);
     }
 
     const grad = ctx.createRadialGradient(
@@ -988,18 +1017,49 @@ export class CanvasRenderExecutor implements IRenderExecutor {
   ): { readonly x: number; readonly y: number } | undefined {
     const cs = this.cellSize;
     const segments = snapshot.snake.segments;
-    const prev = snapshot.snake.previousSegments;
-    const t = snapshot.phase === 'playing' ? snapshot.moveProgress : 1;
+    if (segments.length === 0) return undefined;
+
+    const isGliding =
+      snapshot.phase === 'playing' && snapshot.resumeCountdownSec <= 0;
+    const t = isGliding ? snapshot.moveProgress : 0;
     const frenzy = snapshot.frenzy.level;
     const sickT = Math.min(1, this.sickFlashSec / 0.85);
 
+    // Синхронное скольжение вперёд (cur -> next):
+    // голова визуально касается яблока/камня ровно в момент логического события (t -> 1),
+    // без отставания на 1 клетку!
+    const head = segments[0]!;
+    const dirVec = DIRECTION_VECTORS[snapshot.snake.direction];
+    const nextHead: GridPoint = {
+      x: (head.x + dirVec.x + GRID_PROFILE.width) % GRID_PROFILE.width,
+      y: (head.y + dirVec.y + GRID_PROFILE.height) % GRID_PROFILE.height,
+    };
+    const willGrow =
+      isGliding &&
+      snapshot.goodApples.some((a) => a.pos.x === nextHead.x && a.pos.y === nextHead.y);
+
     const pts: Array<{ x: number; y: number }> = [];
-    for (let i = 0; i < segments.length; i += 1) {
-      const curSeg = segments[i]!;
-      const prevSeg = prev[Math.min(i, prev.length - 1)] ?? curSeg;
-      const ix = interpolateWrapped(prevSeg.x, curSeg.x, GRID_PROFILE.width, t);
-      const iy = interpolateWrapped(prevSeg.y, curSeg.y, GRID_PROFILE.height, t);
-      pts.push({ x: ix, y: iy });
+    // Голова скользит от segments[0] к nextHead
+    pts.push({
+      x: interpolateWrapped(head.x, nextHead.x, GRID_PROFILE.width, t),
+      y: interpolateWrapped(head.y, nextHead.y, GRID_PROFILE.height, t),
+    });
+
+    if (willGrow && t > 0.01) {
+      // При росте на хорошем яблоке тело остаётся на месте, а голова плавно вытягивается из segments[0]
+      for (let i = 0; i < segments.length; i += 1) {
+        const seg = segments[i]!;
+        pts.push({ x: seg.x, y: seg.y });
+      }
+    } else {
+      for (let i = 1; i < segments.length; i += 1) {
+        const curSeg = segments[i]!;
+        const targetSeg = segments[i - 1]!;
+        pts.push({
+          x: interpolateWrapped(curSeg.x, targetSeg.x, GRID_PROFILE.width, t),
+          y: interpolateWrapped(curSeg.y, targetSeg.y, GRID_PROFILE.height, t),
+        });
+      }
     }
 
     const baseHeadRgb: readonly [number, number, number] =
@@ -1085,8 +1145,19 @@ export class CanvasRenderExecutor implements IRenderExecutor {
 
     const hx = bx + (headPt.x + 0.5) * cs;
     const hy = by + (headPt.y + 0.5) * cs;
-    const dirVec = DIRECTION_VECTORS[snapshot.snake.direction];
-    const angle = Math.atan2(dirVec.y, dirVec.x);
+    // Если игрок уже нажал следующий поворот (в очереди), голова чуть-чуть начинает поворачиваться
+    // к будущему направлению в конце клетки — мгновенная визуальная обратная связь!
+    let angle = Math.atan2(dirVec.y, dirVec.x);
+    const queuedDir = snapshot.snake.directionQueue[0];
+    if (queuedDir && isGliding && t > 0.35) {
+      const qVec = DIRECTION_VECTORS[queuedDir];
+      const qAngle = Math.atan2(qVec.y, qVec.x);
+      let diff = qAngle - angle;
+      while (diff > Math.PI) diff -= Math.PI * 2;
+      while (diff < -Math.PI) diff += Math.PI * 2;
+      const previewWeight = ((t - 0.35) / 0.65) * 0.42;
+      angle += diff * previewWeight;
+    }
     const headR = cs * 0.44;
 
     ctx.save();

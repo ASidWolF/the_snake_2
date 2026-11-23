@@ -92,6 +92,8 @@ export class GameUiExecutor {
   private leaderboardFilter: DifficultyKey | 'all' = 'all';
   private savedRecordRank: number | null = null;
   private renderedOverlayKey = '';
+  private lastHudKey = '';
+  private lastLivesKey = '';
 
   constructor(
     root: HTMLElement,
@@ -320,7 +322,35 @@ export class GameUiExecutor {
   private updateHud(snapshot: GameSnapshot, settings: UserSettings): void {
     const inRun = snapshot.phase !== 'menu';
     this.hudEl.classList.toggle('hidden', !inRun);
-    if (!inRun) return;
+    if (!inRun) {
+      this.lastHudKey = '';
+      return;
+    }
+
+    const collected =
+      snapshot.levelStats.initialGoodApples - snapshot.goodApples.length;
+    const frenzyPct = Math.round(snapshot.frenzy.level * 100);
+    const speedStr = snapshot.effectiveSpeed.toFixed(1);
+    const hudKey = [
+      settings.language,
+      snapshot.levelStats.level,
+      collected,
+      snapshot.levelStats.initialGoodApples,
+      snapshot.snake.segments.length,
+      snapshot.score,
+      snapshot.lives,
+      snapshot.maxLives,
+      snapshot.nextLifeScore,
+      speedStr,
+      frenzyPct,
+      snapshot.frenzy.active ? 1 : 0,
+      settings.audio.muted ? 1 : 0,
+    ].join('|');
+
+    if (hudKey === this.lastHudKey) {
+      return;
+    }
+    this.lastHudKey = hudKey;
 
     const t = I18N_PROFILES[settings.language];
     this.hudLevelLabelEl.textContent = t.hudLevel;
@@ -335,8 +365,6 @@ export class GameUiExecutor {
     this.hudPauseBtn.setAttribute('aria-label', t.hudPauseTitle);
 
     this.hudLevelEl.textContent = String(snapshot.levelStats.level);
-    const collected =
-      snapshot.levelStats.initialGoodApples - snapshot.goodApples.length;
     this.hudApplesEl.textContent = `${collected}/${snapshot.levelStats.initialGoodApples}`;
     this.hudLengthEl.textContent = String(snapshot.snake.segments.length);
     this.hudScoreEl.textContent = String(snapshot.score);
@@ -345,8 +373,7 @@ export class GameUiExecutor {
     this.hudNextLifeEl.textContent =
       snapshot.lives >= snapshot.maxLives ? t.hudMaxLives : `· +♥ ${toNextLife}`;
 
-    this.hudSpeedEl.textContent = `${snapshot.effectiveSpeed.toFixed(1)} ${t.hudSpeedUnit}`;
-    const frenzyPct = Math.round(snapshot.frenzy.level * 100);
+    this.hudSpeedEl.textContent = `${speedStr} ${t.hudSpeedUnit}`;
     this.hudFrenzyFillEl.style.width = `${frenzyPct}%`;
 
     this.hudFrenzyStatusEl.classList.remove('active', 'peak');
@@ -360,11 +387,15 @@ export class GameUiExecutor {
       this.hudFrenzyStatusEl.textContent = t.hudCalm;
     }
 
-    let heartsHtml = '';
-    for (let i = 0; i < snapshot.maxLives; i += 1) {
-      heartsHtml += `<span class="heart ${i < snapshot.lives ? 'full' : 'empty'}">♥</span>`;
+    const livesKey = `${snapshot.lives}/${snapshot.maxLives}`;
+    if (livesKey !== this.lastLivesKey) {
+      this.lastLivesKey = livesKey;
+      let heartsHtml = '';
+      for (let i = 0; i < snapshot.maxLives; i += 1) {
+        heartsHtml += `<span class="heart ${i < snapshot.lives ? 'full' : 'empty'}">♥</span>`;
+      }
+      this.hudLivesEl.innerHTML = heartsHtml;
     }
-    this.hudLivesEl.innerHTML = heartsHtml;
     this.hudMuteBtn.textContent = settings.audio.muted ? '🔇' : '🔊';
   }
 
@@ -1055,6 +1086,7 @@ export class GameUiExecutor {
 
     const storageText =
       this.storage.platformName === 'desktop' ? t.lbStorageDesktop : t.lbStorageWeb;
+    const allowClear = this.leaderboardStore.canClear() && entries.length > 0;
 
     this.overlayEl.innerHTML = `
       <div class="card wide">
@@ -1063,7 +1095,7 @@ export class GameUiExecutor {
         <div class="tabs-row">${tabsHtml}</div>
         ${bodyHtml}
         <div class="btn-row">
-          ${entries.length > 0 ? `<button class="btn btn-danger" id="btn-clear-lb">${t.btnClear}</button>` : ''}
+          ${allowClear ? `<button class="btn btn-danger" id="btn-clear-lb">${t.btnClear}</button>` : ''}
           <button class="btn btn-primary" id="btn-close-lb">${t.btnClose}</button>
         </div>
       </div>

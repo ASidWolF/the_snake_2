@@ -36,11 +36,27 @@ describe('SimulationProcessor + GameRuntime (стыки ядра)', () => {
 
     // Попытка разворота на 180° (из RIGHT в LEFT) должна игнорироваться
     runtime.dispatch({ type: 'CHANGE_DIRECTION', direction: 'LEFT' });
+    expect(runtime.getSnapshot().snake.direction).toBe('RIGHT');
     expect(runtime.getSnapshot().snake.directionQueue).toEqual([]);
 
-    // Двойной поворот UP -> LEFT буферизуется корректно
+    // Двойной поворот UP -> LEFT в начале клетки / во время отсчёта:
+    // первый поворот (UP) применяется мгновенно (corner forgiveness), второй (LEFT) буферизуется
     runtime.dispatch({ type: 'CHANGE_DIRECTION', direction: 'UP' });
     runtime.dispatch({ type: 'CHANGE_DIRECTION', direction: 'LEFT' });
+    expect(runtime.getSnapshot().snake.direction).toBe('UP');
+    expect(runtime.getSnapshot().snake.directionQueue).toEqual(['LEFT']);
+
+    // В середине клетки (moveProgress > 0.28) двойной поворот буферизуется в очередь без мгновенной подмены
+    const midCell = runtime.getSnapshot();
+    runtime.store.setState({
+      ...midCell,
+      resumeCountdownSec: 0,
+      moveProgress: 0.6,
+      snake: { ...midCell.snake, direction: 'RIGHT', directionQueue: [] },
+    });
+    runtime.dispatch({ type: 'CHANGE_DIRECTION', direction: 'UP' });
+    runtime.dispatch({ type: 'CHANGE_DIRECTION', direction: 'LEFT' });
+    expect(runtime.getSnapshot().snake.direction).toBe('RIGHT');
     expect(runtime.getSnapshot().snake.directionQueue).toEqual(['UP', 'LEFT']);
 
     // Ставим голову у правого края без препятствий и шагаем вправо → телепорт на x=0

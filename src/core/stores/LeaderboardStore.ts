@@ -143,10 +143,19 @@ export class LeaderboardStore {
     return { entry, rank };
   }
 
-  clear(): void {
+  canClear(): boolean {
+    return this.storage.platformName === 'desktop';
+  }
+
+  clear(): boolean {
+    // Очистка таблицы рекордов разрешена только в локальном скомпилированном ПК-приложении
+    if (this.storage.platformName !== 'desktop') {
+      return false;
+    }
     this.entries = [];
     this.notify();
     void this.storage.setItem(STORAGE_KEY, this.entries);
+    return true;
   }
 
   subscribe(listener: (entries: readonly LeaderboardEntry[]) => void): Unsubscribe {

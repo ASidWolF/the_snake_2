@@ -7,10 +7,10 @@ import {
 } from '../src/core/stores/LeaderboardStore.ts';
 import { SettingsStore } from '../src/core/stores/SettingsStore.ts';
 
-function createMemoryStorage(): IStorageAdapter {
+function createMemoryStorage(platformName: 'web' | 'desktop' = 'web'): IStorageAdapter {
   const map = new Map<string, unknown>();
   return {
-    platformName: 'web',
+    platformName,
     async getItem<T>(key: string): Promise<T | null> {
       return map.has(key) ? (map.get(key) as T) : null;
     },
@@ -80,5 +80,24 @@ describe('SettingsStore и LeaderboardStore', () => {
     await lb2.load();
     expect(lb2.getEntries()).toHaveLength(2);
     expect(lb2.getEntries()[0]?.playerName).toBe('Мастер');
+
+    // В веб-режиме очистка таблицы рекордов запрещена
+    expect(lb2.canClear()).toBe(false);
+    expect(lb2.clear()).toBe(false);
+    expect(lb2.getEntries()).toHaveLength(2);
+
+    // В локальном ПК-приложении (desktop) очистка разрешена
+    const desktopLb = new LeaderboardStore(createMemoryStorage('desktop'));
+    desktopLb.addRecord({
+      playerName: 'Локальный',
+      score: 900,
+      level: 4,
+      apples: 30,
+      maxLength: 12,
+      difficulty: 'normal',
+    });
+    expect(desktopLb.canClear()).toBe(true);
+    expect(desktopLb.clear()).toBe(true);
+    expect(desktopLb.getEntries()).toHaveLength(0);
   });
 });

@@ -46,6 +46,7 @@ export class WebAudioExecutor implements IAudioExecutor {
   private nextStepTime = 0;
   private stepIndex = 0;
   private unlocked = false;
+  private lastFilterCutoff = -1;
 
   unlock(): void {
     if (typeof window === 'undefined') return;
@@ -156,16 +157,19 @@ export class WebAudioExecutor implements IAudioExecutor {
 
   private syncMusicFilter(): void {
     if (!this.ctx || !this.musicFilter) return;
-    const now = this.ctx.currentTime;
     let cutoff = 1600;
     if (this.phase === 'menu') {
       cutoff = 900;
     } else if (this.phase === 'paused' || this.phase === 'life_lost') {
       cutoff = 520;
     } else if (this.phase === 'playing') {
-      cutoff = 1700 + this.frenzyLevel * 2800;
+      cutoff = Math.round(1700 + this.frenzyLevel * 2800);
     }
-    this.musicFilter.frequency.setTargetAtTime(cutoff, now, 0.08);
+    if (Math.abs(cutoff - this.lastFilterCutoff) < 15) {
+      return;
+    }
+    this.lastFilterCutoff = cutoff;
+    this.musicFilter.frequency.setTargetAtTime(cutoff, this.ctx.currentTime, 0.08);
   }
 
   private startSequencer(): void {
