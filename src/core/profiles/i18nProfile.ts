@@ -137,6 +137,8 @@ export interface I18nStrings {
   readonly speechShrinking: string;
   readonly floatExtraLife: string;
   readonly floatMinusLength: string;
+  readonly countdownReady: string;
+  readonly countdownGo: string;
 }
 
 export const I18N_PROFILES: Readonly<Record<LanguageKey, I18nStrings>> = {
@@ -292,6 +294,8 @@ export const I18N_PROFILES: Readonly<Record<LanguageKey, I18nStrings>> = {
     speechShrinking: 'Худею!',
     floatExtraLife: '+1 ЖИЗНЬ!',
     floatMinusLength: '-1 ДЛИНА',
+    countdownReady: 'Приготовься',
+    countdownGo: 'СТАРТ!',
   },
 
   en: {
@@ -446,5 +450,7 @@ export const I18N_PROFILES: Readonly<Record<LanguageKey, I18nStrings>> = {
     speechShrinking: 'Shrinking!',
     floatExtraLife: '+1 LIFE!',
     floatMinusLength: '-1 LEN',
+    countdownReady: 'Get Ready',
+    countdownGo: 'GO!',
   },
 };

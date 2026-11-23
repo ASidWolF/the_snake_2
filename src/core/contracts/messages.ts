@@ -158,6 +158,7 @@ export type GameCommand =
 export type GameEvent =
   | { readonly type: 'RUN_STARTED'; readonly difficulty: DifficultyKey; readonly level: number }
   | { readonly type: 'RUN_RESUMED'; readonly difficulty: DifficultyKey; readonly level: number }
+  | { readonly type: 'COUNTDOWN_TICK'; readonly value: 3 | 2 | 1 | 0 }
   | { readonly type: 'LEVEL_STARTED'; readonly level: number; readonly retry: boolean }
   | { readonly type: 'SNAKE_STEPPED'; readonly head: GridPoint; readonly wrapped: boolean }
   | {

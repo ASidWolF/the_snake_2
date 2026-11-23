@@ -3,12 +3,15 @@ import { EventBus } from '../src/core/bus/EventBus.ts';
 import type { GameEvent, GameSnapshot } from '../src/core/contracts/messages.ts';
 import { GameRuntime } from '../src/core/GameRuntime.ts';
 import { GRID_PROFILE } from '../src/core/profiles/gridProfile.ts';
-import { advanceSimulation } from '../src/core/processors/SimulationProcessor.ts';
+import {
+  ROUND_COUNTDOWN_SEC,
+  advanceSimulation,
+} from '../src/core/processors/SimulationProcessor.ts';
 
 function stepOnce(state: GameSnapshot): { state: GameSnapshot; events: readonly GameEvent[] } {
   const dt = 1 / state.effectiveSpeed + 0.001;
-  // advanceSimulation ограничивает dt до 0.1с за тик, поэтому прокручиваем мелкими порциями
-  let cur = state;
+  // Для пошаговых тестов механик сбрасываем стартовый отсчёт в 0
+  let cur: GameSnapshot = { ...state, resumeCountdownSec: 0 };
   const allEvents: GameEvent[] = [];
   let remaining = dt;
   while (remaining > 0 && cur.phase === 'playing') {
@@ -286,6 +289,7 @@ describe('SimulationProcessor + GameRuntime (стыки ядра)', () => {
     // Пустое поле с одним далёким яблоком, чтобы змейка ни во что не врезалась и проголодалась
     const openField: GameSnapshot = {
       ...base,
+      resumeCountdownSec: 0,
       lives: 2,
       goodApples: [{ id: 1, pos: { x: 0, y: 0 } }],
       badApples: [],
@@ -320,5 +324,37 @@ describe('SimulationProcessor + GameRuntime (стыки ядра)', () => {
     expect(finalSnap.phase).toBe('life_lost');
     expect(finalSnap.lastDeathReason).toBe('starvation');
     expect(finalSnap.deathAnimSec).toBeGreaterThan(0);
+  });
+
+  it('запускает отсчёт 3 → 2 → 1 → СТАРТ (0) в начале раунда и держит змейку на месте до старта', () => {
+    const bus = new EventBus();
+    const ticks: number[] = [];
+    bus.subscribe('COUNTDOWN_TICK', (e) => ticks.push(e.value));
+
+    const runtime = new GameRuntime(bus, 'normal', 909);
+    const started = runtime.dispatch({
+      type: 'START_NEW_RUN',
+      difficulty: 'normal',
+      seed: 909,
+    });
+
+    expect(started.resumeCountdownSec).toBe(ROUND_COUNTDOWN_SEC);
+    expect(ticks).toEqual([3]);
+
+    const initialHead = started.snake.segments[0]!;
+    // Прокручиваем чуть меньше полного отсчёта — змейка всё ещё стоит
+    for (let i = 0; i < 18; i += 1) {
+      runtime.tick(0.1);
+    }
+    expect(runtime.getSnapshot().snake.segments[0]).toEqual(initialHead);
+    expect(runtime.getSnapshot().resumeCountdownSec).toBeGreaterThan(0);
+
+    // Докручиваем до конца отсчёта — получаем сигнал СТАРТ (0) и далее змейка начинает движение
+    for (let i = 0; i < 6; i += 1) {
+      runtime.tick(0.1);
+    }
+    expect(ticks).toEqual([3, 2, 1, 0]);
+    expect(runtime.getSnapshot().resumeCountdownSec).toBe(0);
+    expect(runtime.getSnapshot().snake.segments[0]).not.toEqual(initialHead);
   });
 });

@@ -41,6 +41,7 @@ import {
 import { SeededRng } from './SeededRng.ts';
 
 export const DEATH_ANIM_DURATION_SEC = 1.85;
+export const ROUND_COUNTDOWN_SEC = 1.95; // 3 шага × 0.65 с перед стартом движения
 
 export interface SimulationOutcome {
   readonly state: GameSnapshot;
@@ -115,7 +116,7 @@ function buildLevelSnapshot(
     effectiveSpeed: baseSpeed,
     moveProgress: 0,
     stepAccumulator: 0,
-    resumeCountdownSec: 0,
+    resumeCountdownSec: base.phase === 'playing' ? ROUND_COUNTDOWN_SEC : 0,
     deathAnimSec: 0,
     snake: generated.snake,
     goodApples: generated.goodApples,
@@ -217,6 +218,7 @@ export function applyCommand(
           { type: 'PHASE_CHANGED', from: state.phase, to: 'playing' },
           { type: 'RUN_STARTED', difficulty: command.difficulty, level: 1 },
           { type: 'LEVEL_STARTED', level: 1, retry: false },
+          { type: 'COUNTDOWN_TICK', value: 3 },
         ],
       };
     }
@@ -233,7 +235,7 @@ export function applyCommand(
         phase: targetPhase,
         moveProgress: 0,
         stepAccumulator: 0,
-        resumeCountdownSec: restoringToPlay ? 1.2 : 0,
+        resumeCountdownSec: restoringToPlay ? ROUND_COUNTDOWN_SEC : 0,
         deathAnimSec: 0,
         snake: {
           ...saved.snake,
@@ -241,16 +243,20 @@ export function applyCommand(
           directionQueue: [],
         },
       };
+      const resumeEvents: GameEvent[] = [
+        { type: 'PHASE_CHANGED', from: state.phase, to: targetPhase },
+        {
+          type: 'RUN_RESUMED',
+          difficulty: next.difficulty,
+          level: next.levelStats.level,
+        },
+      ];
+      if (restoringToPlay) {
+        resumeEvents.push({ type: 'COUNTDOWN_TICK', value: 3 });
+      }
       return {
         state: next,
-        events: [
-          { type: 'PHASE_CHANGED', from: state.phase, to: targetPhase },
-          {
-            type: 'RUN_RESUMED',
-            difficulty: next.difficulty,
-            level: next.levelStats.level,
-          },
-        ],
+        events: resumeEvents,
       };
     }
 
@@ -316,6 +322,7 @@ export function applyCommand(
         events: [
           { type: 'PHASE_CHANGED', from: state.phase, to: 'playing' },
           { type: 'LEVEL_STARTED', level: next.levelStats.level, retry: true },
+          { type: 'COUNTDOWN_TICK', value: 3 },
         ],
       };
     }
@@ -348,6 +355,7 @@ export function applyCommand(
         events: [
           { type: 'PHASE_CHANGED', from: state.phase, to: 'playing' },
           { type: 'LEVEL_STARTED', level: nextLevel, retry: false },
+          { type: 'COUNTDOWN_TICK', value: 3 },
         ],
       };
     }
@@ -710,15 +718,33 @@ export function advanceSimulation(
     return { state, events: [] };
   }
 
-  // Короткий безопасный отсчёт при возврате из сохранённой партии
+  // Предстартовый отсчёт 3 → 2 → 1 → СТАРТ!
   if (state.resumeCountdownSec > 0) {
+    const prevBeat = Math.max(
+      1,
+      Math.min(3, Math.ceil((state.resumeCountdownSec / ROUND_COUNTDOWN_SEC) * 3))
+    );
+    const nextCountdown = Math.max(0, state.resumeCountdownSec - safeDt);
+    const nextBeat =
+      nextCountdown > 0
+        ? Math.max(1, Math.min(3, Math.ceil((nextCountdown / ROUND_COUNTDOWN_SEC) * 3)))
+        : 0;
+
+    const countdownEvents: GameEvent[] = [];
+    if (nextBeat < prevBeat) {
+      countdownEvents.push({
+        type: 'COUNTDOWN_TICK',
+        value: nextBeat as 3 | 2 | 1 | 0,
+      });
+    }
+
     return {
       state: {
         ...state,
-        resumeCountdownSec: Math.max(0, state.resumeCountdownSec - safeDt),
+        resumeCountdownSec: nextCountdown,
         moveProgress: 0,
       },
-      events: [],
+      events: countdownEvents,
     };
   }
 

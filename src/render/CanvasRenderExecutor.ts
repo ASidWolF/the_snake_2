@@ -16,7 +16,10 @@ import type {
   GridPoint,
   LanguageKey,
 } from '../core/contracts/messages.ts';
-import { DEATH_ANIM_DURATION_SEC } from '../core/processors/SimulationProcessor.ts';
+import {
+  DEATH_ANIM_DURATION_SEC,
+  ROUND_COUNTDOWN_SEC,
+} from '../core/processors/SimulationProcessor.ts';
 import { DIRECTION_VECTORS, GRID_PROFILE } from '../core/profiles/gridProfile.ts';
 import { I18N_PROFILES } from '../core/profiles/i18nProfile.ts';
 import { ParticleSystem } from './ParticleSystem.ts';
@@ -67,6 +70,7 @@ export class CanvasRenderExecutor implements IRenderExecutor {
   private sickFlashSec = 0;
   private frenzyShoutCooldown = 0;
   private soulSparkCooldown = 0;
+  private goBannerSec = 0;
   private language: LanguageKey = 'ru';
 
   constructor(canvas: HTMLCanvasElement) {
@@ -120,6 +124,18 @@ export class CanvasRenderExecutor implements IRenderExecutor {
         this.particles.clear();
         this.sickFlashSec = 0;
         this.frenzyShoutCooldown = 0;
+        this.goBannerSec = 0;
+        break;
+      case 'COUNTDOWN_TICK':
+        if (event.value === 0) {
+          this.goBannerSec = 0.65;
+          this.particles.spawnShockwave(
+            GRID_PROFILE.width / 2 - 0.5,
+            GRID_PROFILE.height / 2 - 0.5,
+            '#34d399',
+            4.2
+          );
+        }
         break;
       case 'GOOD_APPLE_EATEN':
         this.sickFlashSec = 0;
@@ -223,6 +239,9 @@ export class CanvasRenderExecutor implements IRenderExecutor {
     if (this.sickFlashSec > 0) {
       this.sickFlashSec = Math.max(0, this.sickFlashSec - safeDt);
     }
+    if (this.goBannerSec > 0) {
+      this.goBannerSec = Math.max(0, this.goBannerSec - safeDt);
+    }
 
     // Периодические выкрики «ЕСТЬ!» и искры во время бешенства
     if (snapshot.phase === 'playing' && snapshot.frenzy.active) {
@@ -300,6 +319,8 @@ export class CanvasRenderExecutor implements IRenderExecutor {
 
     if (snapshot.phase === 'playing' && snapshot.resumeCountdownSec > 0) {
       this.drawResumeCountdown(ctx, bx, by, boardW, boardH, snapshot.resumeCountdownSec);
+    } else if (snapshot.phase === 'playing' && this.goBannerSec > 0) {
+      this.drawGoBanner(ctx, bx, by, boardW, boardH, this.goBannerSec);
     }
   }
 
@@ -570,26 +591,99 @@ export class CanvasRenderExecutor implements IRenderExecutor {
   ): void {
     const cx = bx + bw * 0.5;
     const cy = by + bh * 0.5;
-    const step = Math.max(1, Math.min(3, Math.ceil((remainingSec / 1.2) * 3)));
-    const r = Math.max(36, this.cellSize * 1.45);
+    const stepDuration = ROUND_COUNTDOWN_SEC / 3;
+    const step = Math.max(1, Math.min(3, Math.ceil(remainingSec / stepDuration)));
+    const beatRemaining = remainingSec - (step - 1) * stepDuration;
+    const beatProgress = Math.max(0, Math.min(1, beatRemaining / stepDuration));
+    const popScale = 1 + Math.pow(beatProgress, 2) * 0.16;
+
+    const r = Math.max(42, this.cellSize * 1.6);
+    const t = I18N_PROFILES[this.language];
 
     ctx.save();
-    ctx.fillStyle = 'rgba(7, 14, 22, 0.72)';
-    ctx.strokeStyle = 'rgba(52, 211, 153, 0.85)';
-    ctx.lineWidth = 3;
-    ctx.shadowColor = 'rgba(16, 185, 129, 0.55)';
-    ctx.shadowBlur = 22;
+    ctx.translate(cx, cy);
+
+    // Подложка кольца
+    ctx.fillStyle = 'rgba(7, 14, 22, 0.78)';
     ctx.beginPath();
-    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.arc(0, 0, r, 0, Math.PI * 2);
     ctx.fill();
+
+    // Фоновая окружность
+    ctx.strokeStyle = 'rgba(148, 163, 184, 0.22)';
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.arc(0, 0, r, 0, Math.PI * 2);
     ctx.stroke();
 
-    ctx.shadowBlur = 0;
-    ctx.fillStyle = '#ecfdf5';
-    ctx.font = `900 ${Math.round(r * 0.95)}px system-ui, -apple-system, sans-serif`;
+    // Убывающая дуга прогресса для текущего такта
+    ctx.strokeStyle = step === 1 ? '#fde047' : '#34d399';
+    ctx.shadowColor = step === 1 ? 'rgba(253, 224, 71, 0.7)' : 'rgba(52, 211, 153, 0.7)';
+    ctx.shadowBlur = 18;
+    ctx.lineWidth = 4.5;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.arc(
+      0,
+      0,
+      r,
+      -Math.PI / 2,
+      -Math.PI / 2 + Math.PI * 2 * beatProgress
+    );
+    ctx.stroke();
+
+    // Пульсирующая цифра 3 / 2 / 1
+    ctx.save();
+    ctx.scale(popScale, popScale);
+    ctx.shadowBlur = 12;
+    ctx.fillStyle = step === 1 ? '#fef08a' : '#ecfdf5';
+    ctx.font = `900 ${Math.round(r * 0.92)}px system-ui, -apple-system, sans-serif`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText(String(step), cx, cy + 2);
+    ctx.fillText(String(step), 0, 2);
+    ctx.restore();
+
+    // Подпись «Приготовься» / «Get Ready» под кольцом
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = 'rgba(226, 232, 240, 0.92)';
+    ctx.font = `800 ${Math.max(12, Math.round(this.cellSize * 0.45))}px system-ui, -apple-system, sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    ctx.fillText(t.countdownReady, 0, r + 10);
+
+    ctx.restore();
+  }
+
+  private drawGoBanner(
+    ctx: CanvasRenderingContext2D,
+    bx: number,
+    by: number,
+    bw: number,
+    bh: number,
+    remainingSec: number
+  ): void {
+    const t = I18N_PROFILES[this.language];
+    const progress = 1 - Math.max(0, Math.min(1, remainingSec / 0.65));
+    const alpha = progress < 0.2 ? progress / 0.2 : Math.max(0, 1 - (progress - 0.2) / 0.8);
+    const scale = 0.78 + Math.sin(Math.min(1, progress * 1.4) * (Math.PI / 2)) * 0.34;
+
+    const cx = bx + bw * 0.5;
+    const cy = by + bh * 0.5;
+    const fontSize = Math.max(30, Math.round(this.cellSize * 1.45));
+
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.translate(cx, cy);
+    ctx.scale(scale, scale);
+    ctx.font = `900 ${fontSize}px system-ui, -apple-system, sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.shadowColor = 'rgba(16, 185, 129, 0.85)';
+    ctx.shadowBlur = 24;
+    ctx.fillStyle = 'rgba(5, 10, 15, 0.8)';
+    ctx.fillText(t.countdownGo, 2, 3);
+    ctx.fillStyle = '#34d399';
+    ctx.fillText(t.countdownGo, 0, 0);
     ctx.restore();
   }
 

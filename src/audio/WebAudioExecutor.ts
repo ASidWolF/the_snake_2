@@ -137,6 +137,9 @@ export class WebAudioExecutor implements IAudioExecutor {
       case 'UI_CLICK':
         this.playClickSfx();
         break;
+      case 'COUNTDOWN_TICK':
+        this.playCountdownSfx(event.value);
+        break;
       default:
         break;
     }
@@ -362,6 +365,17 @@ export class WebAudioExecutor implements IAudioExecutor {
 
   private playClickSfx(): void {
     this.playTone(640, 820, 0.045, 'sine', 0.16);
+  }
+
+  private playCountdownSfx(value: 3 | 2 | 1 | 0): void {
+    if (value === 0) {
+      // Яркий аккорд «СТАРТ!»
+      this.playTone(523.25, 1046.5, 0.16, 'triangle', 0.3);
+      this.playTone(659.25, 1318.51, 0.18, 'sine', 0.22, 0.04);
+      return;
+    }
+    const freq = value === 1 ? 659.25 : 523.25;
+    this.playTone(freq, freq, 0.09, 'triangle', 0.22);
   }
 
   dispose(): void {
