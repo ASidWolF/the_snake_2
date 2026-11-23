@@ -214,9 +214,11 @@ describe('SimulationProcessor + GameRuntime (стыки ядра)', () => {
     expect(pushed.events.some((e) => e.type === 'STONE_PUSHED')).toBe(true);
 
     // Случай 2: длина 3 <= веса 3 → потеря жизни, но остаются жизни → life_lost → RETRY_LEVEL
+    // Очки неудачной попытки (score 420 -> levelStartScore 350) откатываются при повторе!
     const heavyState: GameSnapshot = {
       ...base,
-      score: 350,
+      score: 420,
+      levelStartScore: 350,
       lives: 2,
       goodApples: [{ id: 1, pos: { x: 0, y: 0 } }],
       badApples: [],
@@ -372,5 +374,64 @@ describe('SimulationProcessor + GameRuntime (стыки ядра)', () => {
     expect(ticks).toEqual([3, 2, 1, 0]);
     expect(runtime.getSnapshot().resumeCountdownSec).toBe(0);
     expect(runtime.getSnapshot().snake.segments[0]).not.toEqual(initialHead);
+  });
+
+  it('на последней жизни пересечение порога очков внутри уровня не спасает от Game Over — бонусная жизнь выдаётся только при завершении уровня', () => {
+    const bus = new EventBus();
+    const runtime = new GameRuntime(bus, 'easy', 707);
+    runtime.dispatch({ type: 'START_NEW_RUN', difficulty: 'easy', seed: 707 });
+    const base = runtime.getSnapshot();
+
+    // 1 жизнь, до порога бонусной жизни осталось 10 очков, на поле 2 яблока и камень
+    const nearThreshold: GameSnapshot = {
+      ...base,
+      lives: 1,
+      score: base.nextLifeScore - 10,
+      levelStartScore: base.nextLifeScore - 10,
+      goodApples: [
+        { id: 1, pos: { x: 13, y: 9 } },
+        { id: 2, pos: { x: 0, y: 0 } },
+      ],
+      badApples: [],
+      stones: [{ id: 5, pos: { x: 14, y: 9 }, weight: 5 }],
+      snake: {
+        segments: [
+          { x: 12, y: 9 },
+          { x: 11, y: 9 },
+          { x: 10, y: 9 },
+        ],
+        previousSegments: [
+          { x: 12, y: 9 },
+          { x: 11, y: 9 },
+          { x: 10, y: 9 },
+        ],
+        direction: 'RIGHT',
+        directionQueue: [],
+      },
+    };
+
+    // Шаг 1: съедаем яблоко, счёт превышает nextLifeScore, но уровень ещё не пройден -> жизнь по-прежнему 1!
+    const afterApple = stepOnce(nearThreshold);
+    expect(afterApple.state.score).toBeGreaterThanOrEqual(nearThreshold.nextLifeScore);
+    expect(afterApple.state.lives).toBe(1);
+    expect(afterApple.events.some((e) => e.type === 'LIFE_GAINED')).toBe(false);
+
+    // Шаг 2: врезаемся в тяжёлый камень -> последняя жизнь тратится -> GAME OVER!
+    const afterCrash = stepOnce(afterApple.state);
+    expect(afterCrash.state.lives).toBe(0);
+    expect(afterCrash.state.phase).toBe('game_over');
+    expect(afterCrash.events.some((e) => e.type === 'GAME_OVER')).toBe(true);
+
+    // А если собрать последнее яблоко и пройти уровень -> бонусная жизнь честно начисляется!
+    const finishLevel: GameSnapshot = {
+      ...nearThreshold,
+      goodApples: [{ id: 1, pos: { x: 13, y: 9 } }],
+      stones: [],
+    };
+    const cleared = stepOnce(finishLevel);
+    expect(cleared.state.phase).toBe('level_complete');
+    expect(cleared.state.lives).toBe(2);
+    expect(cleared.state.lastLevelSummary?.extraLivesGained).toBe(1);
+    expect(cleared.events.some((e) => e.type === 'LIFE_GAINED')).toBe(true);
   });
 });

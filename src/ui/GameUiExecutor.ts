@@ -371,7 +371,11 @@ export class GameUiExecutor {
 
     const toNextLife = Math.max(0, snapshot.nextLifeScore - snapshot.score);
     this.hudNextLifeEl.textContent =
-      snapshot.lives >= snapshot.maxLives ? t.hudMaxLives : `· +♥ ${toNextLife}`;
+      snapshot.lives >= snapshot.maxLives
+        ? t.hudMaxLives
+        : toNextLife === 0
+          ? t.hudBonusLifeReady
+          : `· +♥ ${toNextLife}`;
 
     this.hudSpeedEl.textContent = `${speedStr} ${t.hudSpeedUnit}`;
     this.hudFrenzyFillEl.style.width = `${frenzyPct}%`;
@@ -703,11 +707,17 @@ export class GameUiExecutor {
       .map((i) => `<span class="star ${i <= stars ? 'lit' : 'dim'}">★</span>`)
       .join('');
 
+    const bonusLifeBanner =
+      s && s.extraLivesGained > 0
+        ? `<div class="saved-banner">${t.levelBonusLifeBanner} +${s.extraLivesGained}</div>`
+        : '';
+
     this.overlayEl.innerHTML = `
       <div class="card">
         <div class="stars-row">${starsHtml}</div>
         <h2 class="modal-title" style="color: #34d399;">${t.hudLevelShort} ${snapshot.levelStats.level} ${t.levelCompleteTitle}</h2>
         <p class="modal-sub">${t.levelCompleteSub} ${snapshot.levelStats.level + 1}!</p>
+        ${bonusLifeBanner}
 
         <div class="stats-grid">
           <div class="stat-box"><span class="k">${t.statMoves} (${t.statPar} ${s?.parMoves ?? 0})</span><span class="v">${s?.moves ?? 0}</span></div>

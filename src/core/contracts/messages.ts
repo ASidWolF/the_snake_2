@@ -80,6 +80,7 @@ export interface LevelSummary {
   readonly mistakePenalty: number;
   readonly totalBonus: number;
   readonly efficiencyRating: 1 | 2 | 3;
+  readonly extraLivesGained: number;
 }
 
 export interface GameSnapshot {
@@ -87,9 +88,13 @@ export interface GameSnapshot {
   readonly phase: GamePhase;
   readonly difficulty: DifficultyKey;
   readonly score: number;
+  readonly levelStartScore: number;
+  readonly levelStartApples: number;
+  readonly levelStartStones: number;
   readonly lives: number;
   readonly maxLives: number;
   readonly nextLifeScore: number;
+  readonly extraLivesEarned: number;
   readonly combo: number;
   readonly baseSpeed: number;
   readonly effectiveSpeed: number;

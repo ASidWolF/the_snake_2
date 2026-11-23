@@ -8,6 +8,7 @@ import {
   createInitialFrenzy,
 } from '../src/core/processors/FrenzyProcessor.ts';
 import {
+  computeExtraLifeStep,
   computeGoodApplePoints,
   computeLevelSummary,
   evaluateExtraLives,
@@ -92,13 +93,32 @@ describe('FrenzyProcessor и ScoreProcessor', () => {
     expect(hardPts).toBe(easyPts * 2);
   });
 
-  it('выдаёт дополнительные жизни за очки с ограничением maxLives', () => {
-    const r1 = evaluateExtraLives(1250, 3, 5, 1200);
+  it('выдаёт бонусные жизни по прогрессивному порогу с учётом сложности и лимита maxLives', () => {
+    const easyFirst = computeExtraLifeStep(0, DIFFICULTY_PROFILES.easy);
+    const hardFirst = computeExtraLifeStep(0, DIFFICULTY_PROFILES.hard);
+    expect(hardFirst).toBe(easyFirst * 2);
+
+    const r1 = evaluateExtraLives(
+      easyFirst + 50,
+      3,
+      5,
+      easyFirst,
+      0,
+      DIFFICULTY_PROFILES.easy
+    );
     expect(r1.lives).toBe(4);
     expect(r1.gainedCount).toBe(1);
-    expect(r1.nextLifeScore).toBe(2400);
+    expect(r1.extraLivesEarned).toBe(1);
+    expect(r1.nextLifeScore).toBeGreaterThan(easyFirst * 2);
 
-    const capped = evaluateExtraLives(5000, 5, 5, 1200);
+    const capped = evaluateExtraLives(
+      50000,
+      5,
+      5,
+      easyFirst,
+      0,
+      DIFFICULTY_PROFILES.easy
+    );
     expect(capped.lives).toBe(5);
     expect(capped.gainedCount).toBe(0);
   });

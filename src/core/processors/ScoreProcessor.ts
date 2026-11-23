@@ -10,6 +10,7 @@ import { SCORING_PROFILE } from '../profiles/scoringProfile.ts';
 export interface LifeRewardResult {
   readonly lives: number;
   readonly nextLifeScore: number;
+  readonly extraLivesEarned: number;
   readonly gainedCount: number;
 }
 
@@ -87,26 +88,45 @@ export function computeLevelSummary(
     mistakePenalty,
     totalBonus,
     efficiencyRating,
+    extraLivesGained: 0,
   };
+}
+
+export function computeExtraLifeStep(
+  extraLivesEarned: number,
+  profile: DifficultyProfile
+): number {
+  const base = SCORING_PROFILE.extraLifeBaseScore * profile.scoreMultiplier;
+  const multiplier = 1 + Math.max(0, extraLivesEarned) * SCORING_PROFILE.extraLifeStepGrowth;
+  return Math.round(base * multiplier);
 }
 
 export function evaluateExtraLives(
   score: number,
   currentLives: number,
   maxLives: number,
-  nextLifeScore: number
+  nextLifeScore: number,
+  extraLivesEarned: number,
+  profile: DifficultyProfile
 ): LifeRewardResult {
   let lives = currentLives;
   let threshold = nextLifeScore;
+  let earned = extraLivesEarned;
   let gainedCount = 0;
 
   while (score >= threshold) {
-    threshold += SCORING_PROFILE.extraLifeScoreStep;
+    earned += 1;
+    threshold += computeExtraLifeStep(earned, profile);
     if (lives < maxLives) {
       lives += 1;
       gainedCount += 1;
     }
   }
 
-  return { lives, nextLifeScore: threshold, gainedCount };
+  return {
+    lives,
+    nextLifeScore: threshold,
+    extraLivesEarned: earned,
+    gainedCount,
+  };
 }

@@ -33,6 +33,7 @@ import {
 import { generateLevel, pointKey } from './LevelGeneratorProcessor.ts';
 import {
   applyBadApplePenalty,
+  computeExtraLifeStep,
   computeGoodApplePoints,
   computeLevelSummary,
   computeStonePushPoints,
@@ -91,6 +92,7 @@ function buildLevelSnapshot(
     lives: number;
     maxLives: number;
     nextLifeScore: number;
+    extraLivesEarned: number;
     totalApplesEaten: number;
     totalStonesPushed: number;
     maxLength: number;
@@ -108,9 +110,13 @@ function buildLevelSnapshot(
     phase: base.phase,
     difficulty: base.difficulty,
     score: base.score,
+    levelStartScore: base.score,
+    levelStartApples: base.totalApplesEaten,
+    levelStartStones: base.totalStonesPushed,
     lives: base.lives,
     maxLives: base.maxLives,
     nextLifeScore: base.nextLifeScore,
+    extraLivesEarned: base.extraLivesEarned,
     combo: 0,
     baseSpeed,
     effectiveSpeed: baseSpeed,
@@ -138,6 +144,7 @@ export function createInitialSnapshot(
   difficulty: DifficultyKey = 'normal',
   seed = 104729
 ): GameSnapshot {
+  const profile = DIFFICULTY_PROFILES[difficulty];
   return buildLevelSnapshot(
     {
       runId: `menu-${seed}`,
@@ -146,7 +153,8 @@ export function createInitialSnapshot(
       score: 0,
       lives: SCORING_PROFILE.startingLives,
       maxLives: SCORING_PROFILE.maxLives,
-      nextLifeScore: SCORING_PROFILE.extraLifeScoreStep,
+      nextLifeScore: computeExtraLifeStep(0, profile),
+      extraLivesEarned: 0,
       totalApplesEaten: 0,
       totalStonesPushed: 0,
       maxLength: GRID_PROFILE.initialSnakeLength,
@@ -258,6 +266,7 @@ export function applyCommand(
     case 'START_NEW_RUN': {
       const seed = command.seed ?? deriveNextSeed(state.levelSeed, 7);
       const runId = `run-${command.difficulty}-${seed}`;
+      const profile = DIFFICULTY_PROFILES[command.difficulty];
       const next = buildLevelSnapshot(
         {
           runId,
@@ -266,7 +275,8 @@ export function applyCommand(
           score: 0,
           lives: SCORING_PROFILE.startingLives,
           maxLives: SCORING_PROFILE.maxLives,
-          nextLifeScore: SCORING_PROFILE.extraLifeScoreStep,
+          nextLifeScore: computeExtraLifeStep(0, profile),
+          extraLivesEarned: 0,
           totalApplesEaten: 0,
           totalStonesPushed: 0,
           maxLength: GRID_PROFILE.initialSnakeLength,
@@ -363,17 +373,20 @@ export function applyCommand(
         return { state, events: [] };
       }
       const seed = command.seed ?? deriveNextSeed(state.levelSeed, 19);
+      // Откатываем очки и счётчики до начала текущего уровня, чтобы нельзя было
+      // бесконечно фармить очки и бонусные жизни через повтор неудачных попыток
       const next = buildLevelSnapshot(
         {
           runId: state.runId,
           difficulty: state.difficulty,
           level: state.levelStats.level,
-          score: state.score,
+          score: state.levelStartScore,
           lives: state.lives,
           maxLives: state.maxLives,
           nextLifeScore: state.nextLifeScore,
-          totalApplesEaten: state.totalApplesEaten,
-          totalStonesPushed: state.totalStonesPushed,
+          extraLivesEarned: state.extraLivesEarned,
+          totalApplesEaten: state.levelStartApples,
+          totalStonesPushed: state.levelStartStones,
           maxLength: state.maxLength,
           highestLevel: state.highestLevel,
           phase: 'playing',
@@ -405,6 +418,7 @@ export function applyCommand(
           lives: state.lives,
           maxLives: state.maxLives,
           nextLifeScore: state.nextLifeScore,
+          extraLivesEarned: state.extraLivesEarned,
           totalApplesEaten: state.totalApplesEaten,
           totalStonesPushed: state.totalStonesPushed,
           maxLength: state.maxLength,
@@ -509,6 +523,7 @@ function executeSingleStep(state: GameSnapshot, events: GameEvent[]): GameSnapsh
   let score = state.score;
   let lives = state.lives;
   let nextLifeScore = state.nextLifeScore;
+  let extraLivesEarned = state.extraLivesEarned;
   let combo = state.combo;
   let frenzy = state.frenzy;
   let totalApplesEaten = state.totalApplesEaten;
@@ -520,15 +535,6 @@ function executeSingleStep(state: GameSnapshot, events: GameEvent[]): GameSnapsh
   let mistakes = state.levelStats.mistakes;
   let stonesPushed = state.levelStats.stonesPushed;
   const moves = state.levelStats.moves + 1;
-
-  const grantExtraLivesIfEarned = (pos: GridPoint) => {
-    const reward = evaluateExtraLives(score, lives, state.maxLives, nextLifeScore);
-    lives = reward.lives;
-    nextLifeScore = reward.nextLifeScore;
-    for (let i = 0; i < reward.gainedCount; i += 1) {
-      events.push({ type: 'LIFE_GAINED', lives, pos });
-    }
-  };
 
   let newSegments: GridPoint[];
 
@@ -619,7 +625,6 @@ function executeSingleStep(state: GameSnapshot, events: GameEvent[]): GameSnapsh
       points: pushPoints,
       weight: stone.weight,
     });
-    grantExtraLivesIfEarned(landing);
   } else if (goodAppleIdx >= 0) {
     newSegments = [nextHead, ...prevSegments];
     goodApples = [
@@ -648,7 +653,6 @@ function executeSingleStep(state: GameSnapshot, events: GameEvent[]): GameSnapsh
     if (wasFrenzy) {
       events.push({ type: 'FRENZY_CALMED' });
     }
-    grantExtraLivesIfEarned(nextHead);
   } else if (badAppleIdx >= 0) {
     const advanced = [nextHead, ...prevSegments.slice(0, -1)];
     newSegments = advanced.length > 1 ? advanced.slice(0, -1) : advanced;
@@ -683,11 +687,31 @@ function executeSingleStep(state: GameSnapshot, events: GameEvent[]): GameSnapsh
 
   const effectiveSpeed = computeEffectiveSpeed(state.baseSpeed, frenzy.level, profile);
 
-  // Проверка завершения уровня (все хорошие яблоки уровня собраны)
+  // Проверка завершения уровня (все хорошие яблоки уровня собраны).
+  // Бонусные жизни выдаются только при завершении уровня, когда очки уровня зафиксированы!
   if (goodApples.length === 0) {
-    const summary = computeLevelSummary(nextLevelStats, profile);
-    score += summary.totalBonus;
-    grantExtraLivesIfEarned(nextHead);
+    const rawSummary = computeLevelSummary(nextLevelStats, profile);
+    score += rawSummary.totalBonus;
+
+    const reward = evaluateExtraLives(
+      score,
+      lives,
+      state.maxLives,
+      nextLifeScore,
+      extraLivesEarned,
+      profile
+    );
+    lives = reward.lives;
+    nextLifeScore = reward.nextLifeScore;
+    extraLivesEarned = reward.extraLivesEarned;
+    for (let i = 0; i < reward.gainedCount; i += 1) {
+      events.push({ type: 'LIFE_GAINED', lives, pos: nextHead });
+    }
+
+    const summary = {
+      ...rawSummary,
+      extraLivesGained: reward.gainedCount,
+    };
 
     events.push({ type: 'LEVEL_COMPLETED', summary });
     events.push({ type: 'PHASE_CHANGED', from: state.phase, to: 'level_complete' });
@@ -698,6 +722,7 @@ function executeSingleStep(state: GameSnapshot, events: GameEvent[]): GameSnapsh
       score,
       lives,
       nextLifeScore,
+      extraLivesEarned,
       combo,
       effectiveSpeed,
       moveProgress: 1,
@@ -737,6 +762,7 @@ function executeSingleStep(state: GameSnapshot, events: GameEvent[]): GameSnapsh
     score,
     lives,
     nextLifeScore,
+    extraLivesEarned,
     combo,
     effectiveSpeed,
     snake: {

@@ -57,8 +57,25 @@ export class SavedRunStore {
     try {
       const raw = await this.storage.getItem<unknown>(STORAGE_KEY);
       if (isValidStoredSnapshot(raw)) {
+        const rawObj = raw as unknown as Record<string, unknown>;
         this.saved = {
           ...raw,
+          levelStartScore:
+            typeof rawObj.levelStartScore === 'number'
+              ? rawObj.levelStartScore
+              : raw.score,
+          levelStartApples:
+            typeof rawObj.levelStartApples === 'number'
+              ? rawObj.levelStartApples
+              : raw.totalApplesEaten,
+          levelStartStones:
+            typeof rawObj.levelStartStones === 'number'
+              ? rawObj.levelStartStones
+              : raw.totalStonesPushed,
+          extraLivesEarned:
+            typeof rawObj.extraLivesEarned === 'number'
+              ? rawObj.extraLivesEarned
+              : 0,
           deathAnimSec: 0,
           frenzy: {
             ...raw.frenzy,

@@ -32,6 +32,7 @@ export interface I18nStrings {
   readonly hudLength: string;
   readonly hudScore: string;
   readonly hudMaxLives: string;
+  readonly hudBonusLifeReady: string;
   readonly hudNextLifeTooltip: string;
   readonly hudSpeedUnit: string;
   readonly hudCalm: string;
@@ -64,6 +65,7 @@ export interface I18nStrings {
   readonly statMistakes: string;
   readonly statLevelBonus: string;
   readonly statTotalScore: string;
+  readonly levelBonusLifeBanner: string;
   readonly btnNextLevel: string;
 
   readonly exitTitle: string;
@@ -176,7 +178,8 @@ export const I18N_PROFILES: Readonly<Record<LanguageKey, I18nStrings>> = {
     hudLength: 'Длина',
     hudScore: 'Очки',
     hudMaxLives: '· МАКС ♥',
-    hudNextLifeTooltip: 'До дополнительной жизни',
+    hudBonusLifeReady: '· +♥ на финише!',
+    hudNextLifeTooltip: 'Очков до бонусной жизни (начисляется при прохождении уровня)',
     hudSpeedUnit: 'ш/с',
     hudCalm: 'Спокойна',
     hudFrenzyRising: '⚡ Звереет',
@@ -214,6 +217,7 @@ export const I18N_PROFILES: Readonly<Record<LanguageKey, I18nStrings>> = {
     statMistakes: 'Ошибки',
     statLevelBonus: 'Бонус уровня',
     statTotalScore: 'Общий счёт',
+    levelBonusLifeBanner: '♥ Бонусная жизнь получена:',
     btnNextLevel: '➡ Уровень',
 
     exitTitle: 'Выход в главное меню',
@@ -284,7 +288,7 @@ export const I18N_PROFILES: Readonly<Record<LanguageKey, I18nStrings>> = {
       'фиолетовые с крестом — отнимают 1 сегмент длины, штрафуют счёт и добавляют ошибку уровня.',
     ruleLivesTitle: 'Жизни, пауза и рекорды:',
     ruleLivesBody:
-      'при ошибке вы теряете жизнь и переигрываете уровень. Каждые 1200 очков дают +1 жизнь (до 5). Прогресс сохраняется автоматически — можно продолжить с любого уровня и записать рекорд при выходе в меню.',
+      'при ошибке вы теряете жизнь и переигрываете уровень (очки неудачной попытки откатываются). Набирайте очки и проходите уровни, чтобы получать бонусные жизни (до 5, порог растёт). Прогресс сохраняется автоматически.',
     btnGotIt: 'Понятно',
 
     speechYum: 'Ням!',
@@ -332,7 +336,8 @@ export const I18N_PROFILES: Readonly<Record<LanguageKey, I18nStrings>> = {
     hudLength: 'Len',
     hudScore: 'Score',
     hudMaxLives: '· MAX ♥',
-    hudNextLifeTooltip: 'Points until extra life',
+    hudBonusLifeReady: '· +♥ on clear!',
+    hudNextLifeTooltip: 'Points until bonus life (awarded on level clear)',
     hudSpeedUnit: 'c/s',
     hudCalm: 'Calm',
     hudFrenzyRising: '⚡ Hungry',
@@ -370,6 +375,7 @@ export const I18N_PROFILES: Readonly<Record<LanguageKey, I18nStrings>> = {
     statMistakes: 'Mistakes',
     statLevelBonus: 'Level Bonus',
     statTotalScore: 'Total Score',
+    levelBonusLifeBanner: '♥ Bonus Life Earned:',
     btnNextLevel: '➡ Level',
 
     exitTitle: 'Return to Main Menu',
@@ -440,7 +446,7 @@ export const I18N_PROFILES: Readonly<Record<LanguageKey, I18nStrings>> = {
       'purple apples with an X shrink length by 1, deduct points, and count as a level mistake.',
     ruleLivesTitle: 'Lives, Resume & Scores:',
     ruleLivesBody:
-      'losing a life restarts the current level. Every 1200 points awards +1 life (up to 5). Progress auto-saves so you can continue anytime or save your score when exiting to menu.',
+      'losing a life restarts the current level (points from the failed attempt are rolled back). Clear levels past progressive score milestones to earn bonus lives (up to 5). Progress auto-saves.',
     btnGotIt: 'Got it',
 
     speechYum: 'Yum!',
