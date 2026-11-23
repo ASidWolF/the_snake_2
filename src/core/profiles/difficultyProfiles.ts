@@ -16,6 +16,8 @@ export interface DifficultyProfile {
   readonly frenzyCalmSec: number; // секунд спокойствия до начала бешенства
   readonly frenzyRampSec: number; // секунд до пика бешенства
   readonly frenzyMaxMultiplier: number; // во сколько раз ускоряется на пике
+  readonly starveStartDelaySec: number; // секунд в бешенстве до начала похудения
+  readonly starveIntervalSec: number; // каждые N секунд в бешенстве теряется 1 сегмент
   readonly stoneWeight: number;
   readonly goodApplesBase: number;
   readonly goodApplesPerLevel: number;
@@ -41,6 +43,8 @@ export const DIFFICULTY_PROFILES: Readonly<Record<DifficultyKey, DifficultyProfi
     frenzyCalmSec: 7.0,
     frenzyRampSec: 9.0,
     frenzyMaxMultiplier: 1.45,
+    starveStartDelaySec: 4.0,
+    starveIntervalSec: 3.6,
     stoneWeight: 3,
     goodApplesBase: 6,
     goodApplesPerLevel: 1,
@@ -64,6 +68,8 @@ export const DIFFICULTY_PROFILES: Readonly<Record<DifficultyKey, DifficultyProfi
     frenzyCalmSec: 5.0,
     frenzyRampSec: 7.0,
     frenzyMaxMultiplier: 1.65,
+    starveStartDelaySec: 3.0,
+    starveIntervalSec: 2.8,
     stoneWeight: 4,
     goodApplesBase: 7,
     goodApplesPerLevel: 1,
@@ -87,6 +93,8 @@ export const DIFFICULTY_PROFILES: Readonly<Record<DifficultyKey, DifficultyProfi
     frenzyCalmSec: 3.5,
     frenzyRampSec: 5.0,
     frenzyMaxMultiplier: 1.9,
+    starveStartDelaySec: 2.0,
+    starveIntervalSec: 2.1,
     stoneWeight: 5,
     goodApplesBase: 8,
     goodApplesPerLevel: 1,

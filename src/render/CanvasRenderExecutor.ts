@@ -3,9 +3,9 @@
  * 100% процедурный Canvas 2D рендер The Snake 2:
  * - High-DPI адаптивное поле 24×18
  * - Плавная интерполяция змейки 60/120 FPS с корректной отрисовкой телепорта через стены
- * - Живая голова змейки (следящие глаза, язычок, аура и брови при бешенстве)
- * - Процедурные хорошие/плохие яблоки, гранёные камни с индикатором веса и готовности к толчку
- * - Система частиц, ударных волн и всплывающих очков
+ * - Выразительная голова (следящие глаза, язычок, пожелтение при плохом яблоке, аура бешенства)
+ * - Комикс-реплики змейки («Ням!», «Фу!», «ЕСТЬ!», «Худею!»)
+ * - 3-фазная анимация гибели (подпрыгивает → переворачивается пузом кверху → душа с нимбом улетает вверх)
  * Авторитетного состояния не хранит, игровых решений не принимает.
  */
 
@@ -15,6 +15,7 @@ import type {
   GameSnapshot,
   GridPoint,
 } from '../core/contracts/messages.ts';
+import { DEATH_ANIM_DURATION_SEC } from '../core/processors/SimulationProcessor.ts';
 import { DIRECTION_VECTORS, GRID_PROFILE } from '../core/profiles/gridProfile.ts';
 import { ParticleSystem } from './ParticleSystem.ts';
 
@@ -47,6 +48,8 @@ const COLOR_CALM_TAIL: readonly [number, number, number] = [6, 182, 212];
 const COLOR_WARN_HEAD: readonly [number, number, number] = [251, 146, 60];
 const COLOR_RAGE_HEAD: readonly [number, number, number] = [244, 63, 94];
 const COLOR_RAGE_TAIL: readonly [number, number, number] = [234, 88, 12];
+const COLOR_SICK_HEAD: readonly [number, number, number] = [250, 204, 21];
+const COLOR_SICK_EDGE: readonly [number, number, number] = [163, 230, 53];
 
 export class CanvasRenderExecutor implements IRenderExecutor {
   private readonly canvas: HTMLCanvasElement;
@@ -59,6 +62,9 @@ export class CanvasRenderExecutor implements IRenderExecutor {
   private boardY = 0;
   private cellSize = 30;
   private emberCooldown = 0;
+  private sickFlashSec = 0;
+  private frenzyShoutCooldown = 0;
+  private soulSparkCooldown = 0;
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
@@ -104,8 +110,12 @@ export class CanvasRenderExecutor implements IRenderExecutor {
     switch (event.type) {
       case 'LEVEL_STARTED':
         this.particles.clear();
+        this.sickFlashSec = 0;
+        this.frenzyShoutCooldown = 0;
         break;
       case 'GOOD_APPLE_EATEN':
+        this.sickFlashSec = 0;
+        this.frenzyShoutCooldown = 0;
         this.particles.spawnBurst(event.pos.x, event.pos.y, '#fb7185', 14, 5.2, true);
         this.particles.spawnBurst(event.pos.x, event.pos.y, '#34d399', 6, 3.2, true);
         this.particles.spawnShockwave(event.pos.x, event.pos.y, '#34d399', 2.2);
@@ -116,20 +126,15 @@ export class CanvasRenderExecutor implements IRenderExecutor {
           event.combo > 2 ? '#fde047' : '#6ee7b7',
           event.combo > 2 ? 1.15 : 1
         );
+        this.particles.showSpeech('Ням!', 'yum', 0.9, event.pos.x, event.pos.y);
         if (event.calmedFrenzy) {
           this.particles.spawnShockwave(event.pos.x, event.pos.y, '#38bdf8', 3.4);
-          this.particles.spawnText(
-            event.pos.x,
-            Math.max(0.6, event.pos.y - 0.8),
-            'УСПОКОИЛАСЬ!',
-            '#38bdf8',
-            0.9
-          );
         }
         break;
       case 'BAD_APPLE_EATEN':
+        this.sickFlashSec = 0.85;
         this.particles.spawnBurst(event.pos.x, event.pos.y, '#a855f7', 16, 4.8, true);
-        this.particles.spawnBurst(event.pos.x, event.pos.y, '#fb923c', 10, 3.5, true);
+        this.particles.spawnBurst(event.pos.x, event.pos.y, '#facc15', 10, 3.5, true);
         this.particles.spawnShockwave(event.pos.x, event.pos.y, '#a855f7', 2.1);
         this.particles.spawnText(
           event.pos.x,
@@ -138,6 +143,7 @@ export class CanvasRenderExecutor implements IRenderExecutor {
           '#f472b6',
           1.05
         );
+        this.particles.showSpeech('Фу!', 'ew', 1.0, event.pos.x, event.pos.y);
         this.particles.addShake(0.45);
         break;
       case 'STONE_PUSHED':
@@ -154,10 +160,21 @@ export class CanvasRenderExecutor implements IRenderExecutor {
         this.particles.addShake(0.5);
         break;
       case 'FRENZY_STARTED':
+        this.particles.showSpeech('ЕСТЬ!', 'eat', 1.15);
+        this.frenzyShoutCooldown = 2.3;
         this.particles.addShake(0.25);
         break;
       case 'FRENZY_PEAK':
+        this.particles.showSpeech('ЕСТЬ!!', 'eat', 1.2);
+        this.frenzyShoutCooldown = 2.0;
         this.particles.addShake(0.6);
+        break;
+      case 'SNAKE_SHRUNK':
+        this.particles.spawnBurst(event.tailLost.x, event.tailLost.y, '#fed7aa', 12, 3.6, true);
+        this.particles.spawnShockwave(event.tailLost.x, event.tailLost.y, '#fb923c', 1.6);
+        this.particles.showSpeech('Худею!', 'thin', 1.1, event.head.x, event.head.y);
+        this.frenzyShoutCooldown = 1.6;
+        this.particles.addShake(0.3);
         break;
       case 'LIFE_GAINED':
         this.particles.spawnBurst(event.pos.x, event.pos.y, '#fde047', 22, 6.5, true);
@@ -165,9 +182,10 @@ export class CanvasRenderExecutor implements IRenderExecutor {
         this.particles.spawnText(event.pos.x, event.pos.y, '+1 ЖИЗНЬ!', '#fde047', 1.3);
         break;
       case 'LIFE_LOST':
-        this.particles.spawnBurst(event.pos.x, event.pos.y, '#f43f5e', 28, 6.8, true);
-        this.particles.spawnShockwave(event.pos.x, event.pos.y, '#f43f5e', 3.5);
-        this.particles.addShake(0.95);
+        this.sickFlashSec = 0;
+        this.particles.spawnBurst(event.pos.x, event.pos.y, '#f43f5e', 24, 6.2, true);
+        this.particles.spawnShockwave(event.pos.x, event.pos.y, '#f43f5e', 3.4);
+        this.particles.addShake(0.85);
         break;
       case 'LEVEL_COMPLETED':
         this.particles.spawnBurst(
@@ -191,17 +209,37 @@ export class CanvasRenderExecutor implements IRenderExecutor {
   }
 
   render(snapshot: GameSnapshot, nowSec: number, dtSec: number): void {
-    this.particles.update(dtSec);
+    const safeDt = Math.min(0.05, Math.max(0, dtSec));
+    this.particles.update(safeDt);
 
-    // Искры бешенства из головы змейки во время игры
-    if (snapshot.phase === 'playing' && snapshot.frenzy.level > 0.12) {
-      this.emberCooldown -= dtSec;
-      if (this.emberCooldown <= 0) {
-        const head = snapshot.snake.segments[0];
-        if (head) {
-          this.particles.spawnEmber(head.x, head.y, snapshot.frenzy.level);
+    if (this.sickFlashSec > 0) {
+      this.sickFlashSec = Math.max(0, this.sickFlashSec - safeDt);
+    }
+
+    // Периодические выкрики «ЕСТЬ!» и искры во время бешенства
+    if (snapshot.phase === 'playing' && snapshot.frenzy.active) {
+      if (snapshot.frenzy.level > 0.12) {
+        this.emberCooldown -= safeDt;
+        if (this.emberCooldown <= 0) {
+          const head = snapshot.snake.segments[0];
+          if (head) {
+            this.particles.spawnEmber(head.x, head.y, snapshot.frenzy.level);
+          }
+          this.emberCooldown = lerp(0.14, 0.03, snapshot.frenzy.level);
         }
-        this.emberCooldown = lerp(0.14, 0.03, snapshot.frenzy.level);
+      }
+
+      this.frenzyShoutCooldown -= safeDt;
+      if (this.frenzyShoutCooldown <= 0 && !this.particles.hasActiveSpeech()) {
+        const head = snapshot.snake.segments[0];
+        this.particles.showSpeech(
+          snapshot.frenzy.level > 0.8 ? 'ЕСТЬ!!' : 'ЕСТЬ!',
+          'eat',
+          1.0,
+          head?.x,
+          head?.y
+        );
+        this.frenzyShoutCooldown = lerp(2.5, 1.5, snapshot.frenzy.level);
       }
     }
 
@@ -232,17 +270,285 @@ export class CanvasRenderExecutor implements IRenderExecutor {
     this.drawStones(ctx, bx, by, snapshot, snakeLen, nowSec);
     this.drawBadApples(ctx, bx, by, snapshot, nowSec);
     this.drawGoodApples(ctx, bx, by, snapshot, nowSec);
-    this.drawSnake(ctx, bx, by, snapshot, nowSec);
 
-    this.particles.draw(ctx, bx, by, this.cellSize);
+    const isDying =
+      (snapshot.phase === 'life_lost' || snapshot.phase === 'game_over') &&
+      snapshot.deathAnimSec > 0;
 
-    if (snapshot.frenzy.level > 0.05) {
+    let headGridPos: { readonly x: number; readonly y: number } | undefined;
+
+    if (isDying) {
+      headGridPos = this.drawDyingSnake(ctx, bx, by, snapshot, nowSec, safeDt);
+    } else {
+      headGridPos = this.drawSnake(ctx, bx, by, snapshot, nowSec);
+    }
+
+    this.particles.draw(ctx, bx, by, this.cellSize, headGridPos);
+
+    if (snapshot.frenzy.level > 0.05 && !isDying) {
       this.drawFrenzyVignette(ctx, bx, by, boardW, boardH, snapshot.frenzy.level, nowSec);
     }
 
     if (snapshot.phase === 'playing' && snapshot.resumeCountdownSec > 0) {
       this.drawResumeCountdown(ctx, bx, by, boardW, boardH, snapshot.resumeCountdownSec);
     }
+  }
+
+  /**
+   * 3-фазная анимация гибели:
+   * 1) 0.00..0.34 — подпрыгивание от шока;
+   * 2) 0.34..1.00 — падение и переворот пузом кверху (полосатое пузо + глаза × ×);
+   * 3) 0.42..1.00 — из тела отделяется светящаяся душа-змейка с крылышками и нимбом и улетает вверх.
+   */
+  private drawDyingSnake(
+    ctx: CanvasRenderingContext2D,
+    bx: number,
+    by: number,
+    snapshot: GameSnapshot,
+    nowSec: number,
+    dtSec: number
+  ): { readonly x: number; readonly y: number } | undefined {
+    const cs = this.cellSize;
+    const segments = snapshot.snake.segments;
+    if (segments.length === 0) return undefined;
+
+    const progress = Math.max(
+      0,
+      Math.min(1, 1 - snapshot.deathAnimSec / DEATH_ANIM_DURATION_SEC)
+    );
+
+    // Фаза прыжка (0..0.34) + маленький отскок (0.34..0.46)
+    let jumpPx = 0;
+    if (progress < 0.34) {
+      const p = progress / 0.34;
+      jumpPx = Math.sin(p * Math.PI) * cs * 1.65;
+    } else if (progress < 0.46) {
+      const p = (progress - 0.34) / 0.12;
+      jumpPx = Math.sin(p * Math.PI) * cs * 0.28;
+    }
+
+    // Плавный переворот пузом кверху (начинается на пике прыжка 0.18..0.42)
+    const bellyUp = Math.max(0, Math.min(1, (progress - 0.18) / 0.24));
+
+    // 1. Тень на полу под подпрыгнувшей змейкой
+    ctx.save();
+    for (let i = segments.length - 1; i >= 0; i -= 1) {
+      const seg = segments[i]!;
+      const ratio = 1 - i / Math.max(1, segments.length);
+      const shadowScale = Math.max(0.45, 1 - jumpPx / (cs * 3.2));
+      const sx = bx + (seg.x + 0.5) * cs;
+      const sy = by + (seg.y + 0.68) * cs;
+      ctx.fillStyle = `rgba(0, 0, 0, ${0.36 * shadowScale})`;
+      ctx.beginPath();
+      ctx.ellipse(
+        sx,
+        sy,
+        cs * (0.28 + ratio * 0.16) * shadowScale,
+        cs * 0.18 * shadowScale,
+        0,
+        0,
+        Math.PI * 2
+      );
+      ctx.fill();
+    }
+    ctx.restore();
+
+    // 2. Тело змейки: при перевороте становится бледно-кремовым пузом с поперечными полосками
+    const bodyOuter = bellyUp > 0.5 ? '#fde68a' : '#34d399';
+    const bodyInner = bellyUp > 0.5 ? '#fef9c3' : '#10b981';
+
+    ctx.save();
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    for (let i = segments.length - 1; i >= 1; i -= 1) {
+      const a = segments[i]!;
+      const b = segments[i - 1]!;
+      if (Math.abs(a.x - b.x) > 1.5 || Math.abs(a.y - b.y) > 1.5) continue;
+
+      const waveJumpA = jumpPx * (0.75 + 0.25 * Math.cos(i * 0.55));
+      const waveJumpB = jumpPx * (0.75 + 0.25 * Math.cos((i - 1) * 0.55));
+      const ratio = 1 - i / Math.max(1, segments.length);
+
+      ctx.strokeStyle = bodyOuter;
+      ctx.lineWidth = cs * (0.42 + ratio * 0.34);
+      ctx.beginPath();
+      ctx.moveTo(bx + (a.x + 0.5) * cs, by + (a.y + 0.5) * cs - waveJumpA);
+      ctx.lineTo(bx + (b.x + 0.5) * cs, by + (b.y + 0.5) * cs - waveJumpB);
+      ctx.stroke();
+    }
+
+    // Сегменты и полоски «пуза кверху»
+    for (let i = segments.length - 1; i >= 1; i -= 1) {
+      const seg = segments[i]!;
+      const waveJump = jumpPx * (0.75 + 0.25 * Math.cos(i * 0.55));
+      const ratio = 1 - i / Math.max(1, segments.length);
+      const r = cs * (0.22 + ratio * 0.17);
+      const sx = bx + (seg.x + 0.5) * cs;
+      const sy = by + (seg.y + 0.5) * cs - waveJump;
+
+      ctx.fillStyle = bodyInner;
+      ctx.beginPath();
+      ctx.arc(sx, sy, r, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Поперечные щитки пуза, когда лежит кверху пузом
+      if (bellyUp > 0.45) {
+        ctx.strokeStyle = 'rgba(180, 83, 9, 0.42)';
+        ctx.lineWidth = Math.max(1.2, cs * 0.055);
+        ctx.beginPath();
+        ctx.moveTo(sx - r * 0.65, sy);
+        ctx.lineTo(sx + r * 0.65, sy);
+        ctx.stroke();
+      }
+    }
+    ctx.restore();
+
+    // 3. Голова (подпрыгивает, переворачивается на спину с крестиками × × вместо глаз и высунутым набок языком)
+    const head = segments[0]!;
+    const hx = bx + (head.x + 0.5) * cs;
+    const hy = by + (head.y + 0.5) * cs - jumpPx;
+    const dirVec = DIRECTION_VECTORS[snapshot.snake.direction];
+    const baseAngle = Math.atan2(dirVec.y, dirVec.x);
+    const headR = cs * 0.45;
+
+    ctx.save();
+    ctx.translate(hx, hy);
+    ctx.rotate(baseAngle + bellyUp * Math.PI);
+    // Сплющивание при перевороте
+    const flipScaleY = Math.max(0.28, Math.abs(Math.cos(bellyUp * Math.PI)));
+    ctx.scale(1, flipScaleY < 0.9 ? Math.max(0.88, flipScaleY) : 1);
+
+    // Высунутый безвольный язычок набок
+    ctx.strokeStyle = '#fb7185';
+    ctx.lineWidth = Math.max(1.8, cs * 0.08);
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(headR * 0.72, headR * 0.12);
+    ctx.quadraticCurveTo(headR * 1.25, headR * 0.42, headR * 1.15, headR * 0.82);
+    ctx.stroke();
+
+    // Голова (при пузе кверху видна светло-кремовая нижняя челюсть)
+    ctx.fillStyle = bellyUp > 0.5 ? '#fef3c7' : '#34d399';
+    ctx.strokeStyle = bellyUp > 0.5 ? '#10b981' : '#059669';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.ellipse(headR * 0.08, 0, headR * 1.08, headR * 0.92, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+
+    // Глаза: в прыжке — испуганные кругляши O_O, на спине — мультяшные крестики × ×
+    const eyeX = headR * 0.24;
+    const eyeY = headR * 0.42;
+    const eyeR = headR * 0.28;
+    for (const side of [-1, 1]) {
+      if (bellyUp < 0.45) {
+        ctx.fillStyle = '#ffffff';
+        ctx.beginPath();
+        ctx.arc(eyeX, side * eyeY, eyeR * 1.15, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = '#0f172a';
+        ctx.beginPath();
+        ctx.arc(eyeX, side * eyeY, eyeR * 0.35, 0, Math.PI * 2);
+        ctx.fill();
+      } else {
+        ctx.strokeStyle = '#0f172a';
+        ctx.lineWidth = Math.max(1.8, cs * 0.075);
+        ctx.lineCap = 'round';
+        const d = eyeR * 0.75;
+        ctx.beginPath();
+        ctx.moveTo(eyeX - d, side * eyeY - d);
+        ctx.lineTo(eyeX + d, side * eyeY + d);
+        ctx.moveTo(eyeX + d, side * eyeY - d);
+        ctx.lineTo(eyeX - d, side * eyeY + d);
+        ctx.stroke();
+      }
+    }
+    ctx.restore();
+
+    // 4. Улетающая душа (0.42..1.00) с крылышками и золотым нимбом
+    if (progress > 0.42) {
+      const sp = (progress - 0.42) / 0.58; // 0..1
+      const soulAlpha =
+        sp < 0.18 ? (sp / 0.18) * 0.88 : (1 - (sp - 0.18) / 0.82) * 0.88;
+      const swayX = Math.sin(sp * Math.PI * 3.5) * cs * 0.65;
+      const riseY = Math.pow(sp, 1.15) * cs * 4.8;
+
+      const soulX = hx + swayX;
+      const soulY = by + (head.y + 0.5) * cs - riseY;
+
+      this.soulSparkCooldown -= dtSec;
+      if (this.soulSparkCooldown <= 0 && sp < 0.85) {
+        this.particles.spawnSoulSpark(
+          (soulX - bx) / cs,
+          (soulY - by) / cs
+        );
+        this.soulSparkCooldown = 0.065;
+      }
+
+      ctx.save();
+      ctx.globalAlpha = Math.max(0, soulAlpha);
+      ctx.translate(soulX, soulY);
+
+      // Прозрачное эфирное свечение души
+      const aura = ctx.createRadialGradient(0, 0, cs * 0.1, 0, 0, cs * 1.4);
+      aura.addColorStop(0, 'rgba(224, 242, 254, 0.85)');
+      aura.addColorStop(0.5, 'rgba(56, 189, 248, 0.32)');
+      aura.addColorStop(1, 'rgba(56, 189, 248, 0)');
+      ctx.fillStyle = aura;
+      ctx.beginPath();
+      ctx.arc(0, 0, cs * 1.4, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Маленькие хлопающие крылышки по бокам
+      const flap = Math.sin(nowSec * 18) * 0.32;
+      for (const side of [-1, 1]) {
+        ctx.save();
+        ctx.scale(side, 1);
+        ctx.rotate(-0.35 + flap);
+        ctx.fillStyle = 'rgba(240, 249, 255, 0.82)';
+        ctx.beginPath();
+        ctx.ellipse(cs * 0.52, -cs * 0.05, cs * 0.42, cs * 0.2, -0.25, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      }
+
+      // Призрачный волнистый хвостик души
+      ctx.fillStyle = 'rgba(224, 242, 254, 0.86)';
+      ctx.beginPath();
+      ctx.arc(0, 0, cs * 0.38, Math.PI, 0);
+      ctx.quadraticCurveTo(
+        cs * 0.36,
+        cs * 0.42,
+        Math.sin(nowSec * 10) * cs * 0.18,
+        cs * 0.88
+      );
+      ctx.quadraticCurveTo(-cs * 0.36, cs * 0.42, -cs * 0.38, 0);
+      ctx.closePath();
+      ctx.fill();
+
+      // Спокойные закрытые глазки-дуги у души
+      ctx.strokeStyle = '#0369a1';
+      ctx.lineWidth = Math.max(1.5, cs * 0.06);
+      ctx.lineCap = 'round';
+      for (const side of [-1, 1]) {
+        ctx.beginPath();
+        ctx.arc(side * cs * 0.14, -cs * 0.04, cs * 0.08, 0.15 * Math.PI, 0.85 * Math.PI);
+        ctx.stroke();
+      }
+
+      // Золотой светящийся нимб над головой души
+      ctx.strokeStyle = '#fde047';
+      ctx.shadowColor = '#fde047';
+      ctx.shadowBlur = 10;
+      ctx.lineWidth = Math.max(2, cs * 0.085);
+      ctx.beginPath();
+      ctx.ellipse(0, -cs * 0.58, cs * 0.32, cs * 0.11, 0, 0, Math.PI * 2);
+      ctx.stroke();
+
+      ctx.restore();
+    }
+
+    return head;
   }
 
   private drawResumeCountdown(
@@ -290,7 +596,6 @@ export class CanvasRenderExecutor implements IRenderExecutor {
     const cs = this.cellSize;
     const radius = Math.max(10, cs * 0.45);
 
-    // Внешнее мягкое свечение арены
     ctx.save();
     const borderGlowColor =
       frenzyLevel > 0.05
@@ -303,12 +608,10 @@ export class CanvasRenderExecutor implements IRenderExecutor {
     ctx.fill();
     ctx.restore();
 
-    // Клип по границам поля
     ctx.save();
     this.roundRect(ctx, bx, by, bw, bh, radius);
     ctx.clip();
 
-    // Шахматная мягкая сетка
     const tileA = '#0a141d';
     const tileB = '#0d1924';
     for (let y = 0; y < GRID_PROFILE.height; y += 1) {
@@ -318,7 +621,6 @@ export class CanvasRenderExecutor implements IRenderExecutor {
       }
     }
 
-    // Лёгкий радиальный свет в центре поля
     const grad = ctx.createRadialGradient(
       bx + bw * 0.5,
       by + bh * 0.5,
@@ -337,7 +639,6 @@ export class CanvasRenderExecutor implements IRenderExecutor {
     ctx.fillStyle = grad;
     ctx.fillRect(bx, by, bw, bh);
 
-    // Тонкая пунктирная портальная кайма (напоминает, что стены телепортируют)
     const shimmer = 0.25 + 0.15 * Math.sin(nowSec * 2.2);
     ctx.strokeStyle =
       frenzyLevel > 0.1
@@ -361,7 +662,6 @@ export class CanvasRenderExecutor implements IRenderExecutor {
     bh: number,
     nowSec: number
   ): void {
-    // Живой декоративный «призрак» змейки, плавно скользящий по фону меню
     const cs = this.cellSize;
     const count = 14;
     ctx.save();
@@ -398,7 +698,6 @@ export class CanvasRenderExecutor implements IRenderExecutor {
       const cy = by + (apple.pos.y + 0.5) * cs + bob;
       const r = cs * 0.36 * pulse;
 
-      // Тёплое свечение
       ctx.save();
       const glow = ctx.createRadialGradient(cx, cy, r * 0.2, cx, cy, r * 1.85);
       glow.addColorStop(0, 'rgba(251, 113, 133, 0.38)');
@@ -408,7 +707,6 @@ export class CanvasRenderExecutor implements IRenderExecutor {
       ctx.arc(cx, cy, r * 1.85, 0, Math.PI * 2);
       ctx.fill();
 
-      // Объёмное яблоко
       const bodyGrad = ctx.createRadialGradient(
         cx - r * 0.32,
         cy - r * 0.32,
@@ -425,7 +723,6 @@ export class CanvasRenderExecutor implements IRenderExecutor {
       ctx.arc(cx, cy, r, 0, Math.PI * 2);
       ctx.fill();
 
-      // Блик
       ctx.fillStyle = 'rgba(255, 255, 255, 0.65)';
       ctx.beginPath();
       ctx.ellipse(
@@ -439,7 +736,6 @@ export class CanvasRenderExecutor implements IRenderExecutor {
       );
       ctx.fill();
 
-      // Черенок
       ctx.strokeStyle = '#92400e';
       ctx.lineWidth = Math.max(1.5, cs * 0.07);
       ctx.lineCap = 'round';
@@ -448,7 +744,6 @@ export class CanvasRenderExecutor implements IRenderExecutor {
       ctx.quadraticCurveTo(cx + r * 0.12, cy - r * 1.25, cx + r * 0.28, cy - r * 1.22);
       ctx.stroke();
 
-      // Листик
       ctx.fillStyle = '#34d399';
       ctx.beginPath();
       ctx.ellipse(
@@ -480,7 +775,6 @@ export class CanvasRenderExecutor implements IRenderExecutor {
       const r = cs * 0.34;
 
       ctx.save();
-      // Токсичный ореол
       const aura = ctx.createRadialGradient(cx, cy, r * 0.2, cx, cy, r * 1.7);
       aura.addColorStop(0, 'rgba(168, 85, 247, 0.36)');
       aura.addColorStop(1, 'rgba(168, 85, 247, 0)');
@@ -489,7 +783,6 @@ export class CanvasRenderExecutor implements IRenderExecutor {
       ctx.arc(cx, cy, r * 1.7, 0, Math.PI * 2);
       ctx.fill();
 
-      // Ядовитое яблоко
       const grad = ctx.createRadialGradient(
         cx - r * 0.25,
         cy - r * 0.25,
@@ -506,7 +799,6 @@ export class CanvasRenderExecutor implements IRenderExecutor {
       ctx.arc(cx, cy, r, 0, Math.PI * 2);
       ctx.fill();
 
-      // Предупреждающий крест
       ctx.strokeStyle = '#fde047';
       ctx.lineWidth = Math.max(1.6, cs * 0.08);
       ctx.lineCap = 'round';
@@ -518,7 +810,6 @@ export class CanvasRenderExecutor implements IRenderExecutor {
       ctx.lineTo(cx - d, cy + d);
       ctx.stroke();
 
-      // Всплывающий мини-пузырёк
       const bPhase = (nowSec * 1.1 + bad.id * 0.37) % 1;
       ctx.fillStyle = `rgba(216, 180, 254, ${1 - bPhase})`;
       ctx.beginPath();
@@ -550,7 +841,6 @@ export class CanvasRenderExecutor implements IRenderExecutor {
       const r = cs * 0.42;
 
       ctx.save();
-      // Полигональная форма камня
       ctx.beginPath();
       const verts = 7;
       for (let i = 0; i < verts; i += 1) {
@@ -570,7 +860,6 @@ export class CanvasRenderExecutor implements IRenderExecutor {
       ctx.fillStyle = grad;
       ctx.fill();
 
-      // Подсветка кромки: бирюзовая если змейка может толкнуть камень, красная иначе
       const pulse = canPush ? 0.55 + 0.3 * Math.sin(nowSec * 3.5 + stone.id) : 0.45;
       ctx.strokeStyle = canPush
         ? `rgba(56, 189, 248, ${pulse})`
@@ -578,7 +867,6 @@ export class CanvasRenderExecutor implements IRenderExecutor {
       ctx.lineWidth = canPush ? 2 : 1.3;
       ctx.stroke();
 
-      // Цифра веса камня
       ctx.font = `800 ${Math.max(10, Math.round(cs * 0.4))}px system-ui, sans-serif`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
@@ -594,14 +882,14 @@ export class CanvasRenderExecutor implements IRenderExecutor {
     by: number,
     snapshot: GameSnapshot,
     nowSec: number
-  ): void {
+  ): { readonly x: number; readonly y: number } | undefined {
     const cs = this.cellSize;
     const segments = snapshot.snake.segments;
     const prev = snapshot.snake.previousSegments;
     const t = snapshot.phase === 'playing' ? snapshot.moveProgress : 1;
     const frenzy = snapshot.frenzy.level;
+    const sickT = Math.min(1, this.sickFlashSec / 0.85);
 
-    // Вычисляем плавные интерполированные координаты всех сегментов
     const pts: Array<{ x: number; y: number }> = [];
     for (let i = 0; i < segments.length; i += 1) {
       const curSeg = segments[i]!;
@@ -611,20 +899,36 @@ export class CanvasRenderExecutor implements IRenderExecutor {
       pts.push({ x: ix, y: iy });
     }
 
-    const headColor =
+    const baseHeadRgb: readonly [number, number, number] =
       frenzy <= 0.5
-        ? lerpColor(COLOR_CALM_HEAD, COLOR_WARN_HEAD, frenzy * 2)
-        : lerpColor(COLOR_WARN_HEAD, COLOR_RAGE_HEAD, (frenzy - 0.5) * 2);
+        ? [
+            Math.round(lerp(COLOR_CALM_HEAD[0], COLOR_WARN_HEAD[0], frenzy * 2)),
+            Math.round(lerp(COLOR_CALM_HEAD[1], COLOR_WARN_HEAD[1], frenzy * 2)),
+            Math.round(lerp(COLOR_CALM_HEAD[2], COLOR_WARN_HEAD[2], frenzy * 2)),
+          ]
+        : [
+            Math.round(lerp(COLOR_WARN_HEAD[0], COLOR_RAGE_HEAD[0], (frenzy - 0.5) * 2)),
+            Math.round(lerp(COLOR_WARN_HEAD[1], COLOR_RAGE_HEAD[1], (frenzy - 0.5) * 2)),
+            Math.round(lerp(COLOR_WARN_HEAD[2], COLOR_RAGE_HEAD[2], (frenzy - 0.5) * 2)),
+          ];
+
+    // При плохом яблоке голова заметно желтеет!
+    const headColor =
+      sickT > 0.02
+        ? lerpColor(baseHeadRgb, COLOR_SICK_HEAD, Math.min(1, sickT * 1.25))
+        : `rgb(${baseHeadRgb[0]}, ${baseHeadRgb[1]}, ${baseHeadRgb[2]})`;
+    const headEdgeColor =
+      sickT > 0.02
+        ? lerpColor(COLOR_CALM_TAIL, COLOR_SICK_EDGE, sickT)
+        : lerpColor(COLOR_CALM_TAIL, COLOR_RAGE_TAIL, frenzy);
     const tailColor = lerpColor(COLOR_CALM_TAIL, COLOR_RAGE_TAIL, frenzy);
 
-    // 1. Сначала соединительные гладкие сегменты тела от хвоста к голове
     ctx.save();
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
     for (let i = pts.length - 1; i >= 1; i -= 1) {
       const a = pts[i]!;
       const b = pts[i - 1]!;
-      // Не рисуем соединительную линию через всё поле при телепорте через границу
       if (Math.abs(a.x - b.x) > 1.5 || Math.abs(a.y - b.y) > 1.5) {
         continue;
       }
@@ -644,7 +948,6 @@ export class CanvasRenderExecutor implements IRenderExecutor {
     }
     ctx.restore();
 
-    // 2. Чешуйчатые узлы и мягкий хребтовой блик
     for (let i = pts.length - 1; i >= 1; i -= 1) {
       const p = pts[i]!;
       const ratio = 1 - i / Math.max(1, pts.length);
@@ -653,16 +956,18 @@ export class CanvasRenderExecutor implements IRenderExecutor {
       const cy = by + (p.y + 0.5) * cs;
 
       ctx.save();
-      ctx.fillStyle = i === pts.length - 1 ? tailColor : lerpColor(
-        frenzy > 0.2 ? COLOR_RAGE_TAIL : COLOR_CALM_TAIL,
-        frenzy > 0.5 ? COLOR_RAGE_HEAD : COLOR_CALM_HEAD,
-        ratio
-      );
+      ctx.fillStyle =
+        i === pts.length - 1
+          ? tailColor
+          : lerpColor(
+              frenzy > 0.2 ? COLOR_RAGE_TAIL : COLOR_CALM_TAIL,
+              frenzy > 0.5 ? COLOR_RAGE_HEAD : COLOR_CALM_HEAD,
+              ratio
+            );
       ctx.beginPath();
       ctx.arc(cx, cy, r, 0, Math.PI * 2);
       ctx.fill();
 
-      // Деликатный светлый ромбик-чешуйка
       if (i % 2 === 0) {
         ctx.fillStyle = `rgba(255, 255, 255, ${0.14 + frenzy * 0.12})`;
         ctx.beginPath();
@@ -672,9 +977,8 @@ export class CanvasRenderExecutor implements IRenderExecutor {
       ctx.restore();
     }
 
-    // 3. Выразительная голова
     const headPt = pts[0];
-    if (!headPt) return;
+    if (!headPt) return undefined;
 
     const hx = bx + (headPt.x + 0.5) * cs;
     const hy = by + (headPt.y + 0.5) * cs;
@@ -686,14 +990,13 @@ export class CanvasRenderExecutor implements IRenderExecutor {
     ctx.translate(hx, hy);
     ctx.rotate(angle);
 
-    // Аура головы (усиливается при бешенстве)
-    ctx.shadowColor = headColor;
-    ctx.shadowBlur = 10 + frenzy * 18;
+    ctx.shadowColor = sickT > 0.05 ? '#facc15' : headColor;
+    ctx.shadowBlur = 10 + frenzy * 18 + sickT * 14;
 
-    // Раздвоенный язычок
+    // Язычок (прячется, когда змейке плохо)
     const tongueFreq = 4.5 + frenzy * 11;
     const tongueWave = Math.sin(nowSec * tongueFreq);
-    if (tongueWave > 0.15 || frenzy > 0.4) {
+    if (sickT <= 0.1 && (tongueWave > 0.15 || frenzy > 0.4)) {
       const ext = headR * (0.55 + Math.max(0, tongueWave) * 0.45);
       ctx.strokeStyle = '#fb7185';
       ctx.lineWidth = Math.max(1.5, cs * 0.065);
@@ -707,31 +1010,42 @@ export class CanvasRenderExecutor implements IRenderExecutor {
       ctx.stroke();
     }
 
-    // Скульптурная форма головы
     const headGrad = ctx.createRadialGradient(-headR * 0.2, -headR * 0.2, 1, 0, 0, headR * 1.1);
-    headGrad.addColorStop(0, '#ecfdf5');
+    headGrad.addColorStop(0, sickT > 0.1 ? '#fef9c3' : '#ecfdf5');
     headGrad.addColorStop(0.28, headColor);
-    headGrad.addColorStop(1, tailColor);
+    headGrad.addColorStop(1, headEdgeColor);
     ctx.fillStyle = headGrad;
     ctx.beginPath();
     ctx.ellipse(headR * 0.08, 0, headR * 1.08, headR * 0.92, 0, 0, Math.PI * 2);
     ctx.fill();
 
-    // Находим направление к ближайшему хорошему яблоку, чтобы глаза следили за ним
     const lookOffset = this.computeEyeLook(headPt, snapshot.goodApples, angle);
-
     const eyeX = headR * 0.26;
     const eyeY = headR * 0.42;
     const eyeR = headR * 0.29;
 
     for (const side of [-1, 1]) {
       ctx.shadowBlur = 0;
+
+      if (sickT > 0.12) {
+        // Жмурящиеся «тошнит» глаза > < при плохом яблоке
+        ctx.strokeStyle = '#422006';
+        ctx.lineWidth = Math.max(1.8, cs * 0.075);
+        ctx.lineCap = 'round';
+        const d = eyeR * 0.75;
+        ctx.beginPath();
+        ctx.moveTo(eyeX - d, side * eyeY - side * d * 0.6);
+        ctx.lineTo(eyeX + d * 0.5, side * eyeY);
+        ctx.lineTo(eyeX - d, side * eyeY + side * d * 0.6);
+        ctx.stroke();
+        continue;
+      }
+
       ctx.fillStyle = frenzy > 0.65 ? '#fef08a' : '#ffffff';
       ctx.beginPath();
       ctx.arc(eyeX, side * eyeY, eyeR, 0, Math.PI * 2);
       ctx.fill();
 
-      // Зрачок
       ctx.fillStyle = frenzy > 0.75 ? '#991b1b' : '#0f172a';
       ctx.beginPath();
       ctx.arc(
@@ -743,13 +1057,11 @@ export class CanvasRenderExecutor implements IRenderExecutor {
       );
       ctx.fill();
 
-      // Блик в глазу
       ctx.fillStyle = '#ffffff';
       ctx.beginPath();
       ctx.arc(eyeX + eyeR * 0.16, side * eyeY - eyeR * 0.18, eyeR * 0.2, 0, Math.PI * 2);
       ctx.fill();
 
-      // Хмурые «злые» брови при бешенстве
       if (frenzy > 0.18) {
         ctx.strokeStyle = '#450a0a';
         ctx.lineWidth = Math.max(1.5, cs * 0.075);
@@ -763,6 +1075,7 @@ export class CanvasRenderExecutor implements IRenderExecutor {
     }
 
     ctx.restore();
+    return headPt;
   }
 
   private computeEyeLook(

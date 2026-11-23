@@ -18,7 +18,8 @@ export type GamePhase =
 export type DeathReason =
   | 'self_collision'
   | 'stone_too_heavy'
-  | 'stone_hit_snake';
+  | 'stone_hit_snake'
+  | 'starvation';
 
 export interface GridPoint {
   readonly x: number;
@@ -53,6 +54,7 @@ export interface FrenzyState {
   readonly level: number; // 0..1
   readonly active: boolean;
   readonly peakTriggered: boolean;
+  readonly starveTimerSec: number;
 }
 
 export interface LevelStats {
@@ -94,6 +96,7 @@ export interface GameSnapshot {
   readonly moveProgress: number; // 0..1 для плавной интерполяции
   readonly stepAccumulator: number;
   readonly resumeCountdownSec: number; // короткая пауза-отсчёт при возврате в сохранённую партию
+  readonly deathAnimSec: number; // длительность анимации гибели перед показом окна
   readonly snake: SnakeState;
   readonly goodApples: readonly GoodApple[];
   readonly badApples: readonly BadApple[];
@@ -178,6 +181,12 @@ export type GameEvent =
   | { readonly type: 'FRENZY_STARTED'; readonly level: number }
   | { readonly type: 'FRENZY_PEAK'; readonly level: number }
   | { readonly type: 'FRENZY_CALMED' }
+  | {
+      readonly type: 'SNAKE_SHRUNK';
+      readonly head: GridPoint;
+      readonly tailLost: GridPoint;
+      readonly newLength: number;
+    }
   | { readonly type: 'LIFE_GAINED'; readonly lives: number; readonly pos: GridPoint }
   | {
       readonly type: 'LIFE_LOST';

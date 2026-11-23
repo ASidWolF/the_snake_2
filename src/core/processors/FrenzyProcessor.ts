@@ -1,6 +1,7 @@
 /**
  * Роль: Обработчик (Processor).
- * Чистый расчёт базовой скорости уровня, «змеиного бешенства» и итоговой скорости.
+ * Чистый расчёт базовой скорости уровня, «змеиного бешенства», итоговой скорости
+ * и интервалов голодного похудения при длительном бешенстве.
  */
 
 import type { FrenzyState } from '../contracts/messages.ts';
@@ -10,6 +11,7 @@ export interface FrenzyTickResult {
   readonly nextFrenzy: FrenzyState;
   readonly startedNow: boolean;
   readonly peakReachedNow: boolean;
+  readonly shrinkCount: number;
 }
 
 export function createInitialFrenzy(): FrenzyState {
@@ -18,6 +20,7 @@ export function createInitialFrenzy(): FrenzyState {
     level: 0,
     active: false,
     peakTriggered: false,
+    starveTimerSec: 0,
   };
 }
 
@@ -43,7 +46,12 @@ export function advanceFrenzy(
   profile: DifficultyProfile
 ): FrenzyTickResult {
   if (dtSec <= 0) {
-    return { nextFrenzy: current, startedNow: false, peakReachedNow: false };
+    return {
+      nextFrenzy: current,
+      startedNow: false,
+      peakReachedNow: false,
+      shrinkCount: 0,
+    };
   }
 
   const hungerSec = current.hungerSec + dtSec;
@@ -54,9 +62,11 @@ export function advanceFrenzy(
         level: 0,
         active: false,
         peakTriggered: false,
+        starveTimerSec: 0,
       },
       startedNow: false,
       peakReachedNow: false,
+      shrinkCount: 0,
     };
   }
 
@@ -65,14 +75,34 @@ export function advanceFrenzy(
   const startedNow = !current.active && level > 0;
   const peakReachedNow = !current.peakTriggered && level >= 1;
 
+  // Голодное похудение начинается после задержки starveStartDelaySec в состоянии бешенства
+  let starveTimerSec = current.starveTimerSec;
+  let shrinkCount = 0;
+
+  if (overSec >= profile.starveStartDelaySec) {
+    const prevOver = Math.max(0, current.hungerSec - profile.frenzyCalmSec);
+    const activeStarveDt =
+      prevOver >= profile.starveStartDelaySec
+        ? dtSec
+        : overSec - profile.starveStartDelaySec;
+
+    starveTimerSec += Math.max(0, activeStarveDt);
+    while (starveTimerSec >= profile.starveIntervalSec) {
+      starveTimerSec -= profile.starveIntervalSec;
+      shrinkCount += 1;
+    }
+  }
+
   return {
     nextFrenzy: {
       hungerSec,
       level,
       active: true,
       peakTriggered: current.peakTriggered || level >= 1,
+      starveTimerSec,
     },
     startedNow,
     peakReachedNow,
+    shrinkCount,
   };
 }

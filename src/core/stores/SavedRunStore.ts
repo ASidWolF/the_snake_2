@@ -56,7 +56,21 @@ export class SavedRunStore {
   async load(): Promise<GameSnapshot | null> {
     try {
       const raw = await this.storage.getItem<unknown>(STORAGE_KEY);
-      this.saved = isValidStoredSnapshot(raw) ? raw : null;
+      if (isValidStoredSnapshot(raw)) {
+        this.saved = {
+          ...raw,
+          deathAnimSec: 0,
+          frenzy: {
+            ...raw.frenzy,
+            starveTimerSec:
+              typeof raw.frenzy?.starveTimerSec === 'number'
+                ? raw.frenzy.starveTimerSec
+                : 0,
+          },
+        };
+      } else {
+        this.saved = null;
+      }
       this.notify();
     } catch {
       this.saved = null;
@@ -81,6 +95,7 @@ export class SavedRunStore {
             moveProgress: 0,
             stepAccumulator: 0,
             resumeCountdownSec: 0,
+            deathAnimSec: 0,
             snake: {
               ...snapshot.snake,
               previousSegments: snapshot.snake.segments.map((p) => ({ ...p })),
@@ -91,6 +106,7 @@ export class SavedRunStore {
             moveProgress: 0,
             stepAccumulator: 0,
             resumeCountdownSec: 0,
+            deathAnimSec: 0,
           };
 
     this.saved = normalized;

@@ -76,7 +76,13 @@ describe('SimulationProcessor + GameRuntime (стыки ядра)', () => {
     const snap = runtime.getSnapshot();
     const custom: GameSnapshot = {
       ...snap,
-      frenzy: { hungerSec: 9, level: 0.6, active: true, peakTriggered: false },
+      frenzy: {
+        hungerSec: 9,
+        level: 0.6,
+        active: true,
+        peakTriggered: false,
+        starveTimerSec: 0,
+      },
       goodApples: [{ id: 1, pos: { x: 13, y: 9 } }],
       badApples: [],
       stones: [],
@@ -257,6 +263,62 @@ describe('SimulationProcessor + GameRuntime (стыки ядра)', () => {
     const out = stepOnce(lastLifeState);
     expect(out.state.phase).toBe('game_over');
     expect(out.state.lives).toBe(0);
+    expect(out.state.deathAnimSec).toBeGreaterThan(0);
     expect(out.events.some((e) => e.type === 'GAME_OVER')).toBe(true);
+
+    // Анимация гибели плавно доходит до 0
+    let animating = out.state;
+    for (let i = 0; i < 25; i += 1) {
+      animating = advanceSimulation(animating, 0.1).state;
+    }
+    expect(animating.deathAnimSec).toBe(0);
+  });
+
+  it('при долгом бешенстве змейка худеет, испускает SNAKE_SHRUNK и гибнет при длине 0 (starvation)', () => {
+    const bus = new EventBus();
+    const events: GameEvent[] = [];
+    bus.subscribeAll((e) => events.push(e));
+
+    const runtime = new GameRuntime(bus, 'hard', 505);
+    runtime.dispatch({ type: 'START_NEW_RUN', difficulty: 'hard', seed: 505 });
+    const base = runtime.getSnapshot();
+
+    // Пустое поле с одним далёким яблоком, чтобы змейка ни во что не врезалась и проголодалась
+    const openField: GameSnapshot = {
+      ...base,
+      lives: 2,
+      goodApples: [{ id: 1, pos: { x: 0, y: 0 } }],
+      badApples: [],
+      stones: [],
+      snake: {
+        segments: [
+          { x: 10, y: 9 },
+          { x: 9, y: 9 },
+          { x: 8, y: 9 },
+        ],
+        previousSegments: [
+          { x: 10, y: 9 },
+          { x: 9, y: 9 },
+          { x: 8, y: 9 },
+        ],
+        direction: 'RIGHT',
+        directionQueue: [],
+      },
+    };
+    runtime.store.setState(openField);
+
+    // Прокручиваем время до голодной гибели (hard: calm 3.5s + delay 2.0s + 3 * 2.1s ≈ 11.8s)
+    for (let i = 0; i < 160; i += 1) {
+      if (runtime.getSnapshot().phase !== 'playing') break;
+      runtime.tick(0.1);
+    }
+
+    const finalSnap = runtime.getSnapshot();
+    const shrunkEvents = events.filter((e) => e.type === 'SNAKE_SHRUNK');
+    expect(shrunkEvents.length).toBe(3);
+    expect(shrunkEvents.map((e) => e.newLength)).toEqual([2, 1, 0]);
+    expect(finalSnap.phase).toBe('life_lost');
+    expect(finalSnap.lastDeathReason).toBe('starvation');
+    expect(finalSnap.deathAnimSec).toBeGreaterThan(0);
   });
 });

@@ -40,6 +40,8 @@ import {
 } from './ScoreProcessor.ts';
 import { SeededRng } from './SeededRng.ts';
 
+export const DEATH_ANIM_DURATION_SEC = 1.85;
+
 export interface SimulationOutcome {
   readonly state: GameSnapshot;
   readonly events: readonly GameEvent[];
@@ -114,6 +116,7 @@ function buildLevelSnapshot(
     moveProgress: 0,
     stepAccumulator: 0,
     resumeCountdownSec: 0,
+    deathAnimSec: 0,
     snake: generated.snake,
     goodApples: generated.goodApples,
     badApples: generated.badApples,
@@ -231,6 +234,7 @@ export function applyCommand(
         moveProgress: 0,
         stepAccumulator: 0,
         resumeCountdownSec: restoringToPlay ? 1.2 : 0,
+        deathAnimSec: 0,
         snake: {
           ...saved.snake,
           previousSegments: saved.snake.segments.map((s) => ({ ...s })),
@@ -398,6 +402,8 @@ function triggerLifeLoss(
     lastDeathReason: reason,
     moveProgress: 0,
     stepAccumulator: 0,
+    resumeCountdownSec: 0,
+    deathAnimSec: DEATH_ANIM_DURATION_SEC,
   };
 }
 
@@ -680,11 +686,29 @@ export function advanceSimulation(
   state: GameSnapshot,
   dtSec: number
 ): SimulationOutcome {
-  if (state.phase !== 'playing' || dtSec <= 0) {
+  if (dtSec <= 0) {
     return { state, events: [] };
   }
 
   const safeDt = Math.min(0.1, dtSec);
+
+  // Проигрываем анимацию гибели перед появлением окна итогов
+  if (
+    (state.phase === 'life_lost' || state.phase === 'game_over') &&
+    state.deathAnimSec > 0
+  ) {
+    return {
+      state: {
+        ...state,
+        deathAnimSec: Math.max(0, state.deathAnimSec - safeDt),
+      },
+      events: [],
+    };
+  }
+
+  if (state.phase !== 'playing') {
+    return { state, events: [] };
+  }
 
   // Короткий безопасный отсчёт при возврате из сохранённой партии
   if (state.resumeCountdownSec > 0) {
@@ -701,7 +725,7 @@ export function advanceSimulation(
   const profile = DIFFICULTY_PROFILES[state.difficulty];
   const events: GameEvent[] = [];
 
-  // 1. Обновляем бешенство и время уровня
+  // 1. Обновляем бешенство, голодное похудение и время уровня
   const frenzyTick = advanceFrenzy(state.frenzy, safeDt, profile);
   let mistakes = state.levelStats.mistakes;
 
@@ -728,6 +752,41 @@ export function advanceSimulation(
     },
     stepAccumulator: state.stepAccumulator + safeDt,
   };
+
+  // Голодное похудение в бешенстве: змейка теряет по 1 сегменту и может погибнуть на 0
+  for (let i = 0; i < frenzyTick.shrinkCount; i += 1) {
+    const segs = working.snake.segments;
+    const head = segs[0]!;
+    const tailLost = segs[segs.length - 1]!;
+
+    if (segs.length <= 1) {
+      events.push({
+        type: 'SNAKE_SHRUNK',
+        head,
+        tailLost,
+        newLength: 0,
+      });
+      const starved = triggerLifeLoss(working, 'starvation', head, events);
+      return { state: starved, events };
+    }
+
+    const nextSegments = segs.slice(0, -1);
+    const nextPrev = working.snake.previousSegments.slice(0, nextSegments.length);
+    events.push({
+      type: 'SNAKE_SHRUNK',
+      head,
+      tailLost,
+      newLength: nextSegments.length,
+    });
+    working = {
+      ...working,
+      snake: {
+        ...working.snake,
+        segments: nextSegments,
+        previousSegments: nextPrev,
+      },
+    };
+  }
 
   // 2. Выполняем накопленные логические шаги сетки
   let guardSteps = 0;

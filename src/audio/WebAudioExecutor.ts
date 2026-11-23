@@ -119,6 +119,9 @@ export class WebAudioExecutor implements IAudioExecutor {
       case 'FRENZY_CALMED':
         this.playCalmSfx();
         break;
+      case 'SNAKE_SHRUNK':
+        this.playShrinkSfx();
+        break;
       case 'LIFE_GAINED':
         this.playOneUpSfx();
         break;
@@ -326,9 +329,21 @@ export class WebAudioExecutor implements IAudioExecutor {
     });
   }
 
+  private playShrinkSfx(): void {
+    this.playTone(420, 210, 0.22, 'triangle', 0.24);
+    this.playTone(280, 145, 0.18, 'sine', 0.16, 0.06);
+  }
+
   private playLifeLostSfx(): void {
-    this.playTone(320, 110, 0.26, 'sawtooth', 0.34);
-    this.playTone(180, 58, 0.35, 'triangle', 0.32, 0.14);
+    // 1. Мультяшный прыжок-испуг
+    this.playTone(240, 560, 0.14, 'triangle', 0.28, 0);
+    // 2. Плюх на спину
+    this.playTone(210, 62, 0.26, 'sawtooth', 0.3, 0.22);
+    // 3. Эфирный перелив улетающей души
+    const soulNotes = [659.25, 783.99, 987.77, 1318.51];
+    soulNotes.forEach((n, idx) => {
+      this.playTone(n, n * 1.03, 0.28, 'sine', 0.15, 0.68 + idx * 0.16);
+    });
   }
 
   private playLevelCompleteSfx(): void {

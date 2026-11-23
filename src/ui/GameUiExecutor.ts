@@ -42,6 +42,7 @@ const DEATH_REASON_TEXT: Readonly<Record<DeathReason, string>> = {
   self_collision: 'Змейка врезалась в собственный хвост.',
   stone_too_heavy: 'Камень оказался слишком тяжёлым — длина змейки должна быть больше веса камня.',
   stone_hit_snake: 'Отлетевший камень задел тело змейки.',
+  starvation: 'Змейка похудела до нуля от голода во время бешенства!',
 };
 
 function escapeHtml(value: string): string {
@@ -238,8 +239,13 @@ export class GameUiExecutor {
       ? `${savedRun.runId}:${savedRun.levelStats.level}:${savedRun.score}:${savedRun.phase}`
       : 'none';
 
+    const isDeathAnimating =
+      (snapshot.phase === 'life_lost' || snapshot.phase === 'game_over') &&
+      snapshot.deathAnimSec > 0;
+
     const key = [
       snapshot.phase,
+      isDeathAnimating ? 'dying' : 'idle',
       this.activeModal,
       settings.difficulty,
       this.leaderboardFilter,
@@ -361,7 +367,11 @@ export class GameUiExecutor {
       return;
     }
 
-    if (snapshot.phase === 'playing') {
+    const isDeathAnimating =
+      (snapshot.phase === 'life_lost' || snapshot.phase === 'game_over') &&
+      snapshot.deathAnimSec > 0;
+
+    if (snapshot.phase === 'playing' || isDeathAnimating) {
       this.overlayEl.classList.add('hidden');
       this.overlayEl.innerHTML = '';
       return;
@@ -1018,7 +1028,7 @@ export class GameUiExecutor {
           </div>
           <div class="rule-item">
             <span class="rule-icon">🔥</span>
-            <div><strong>Змеиное бешенство:</strong> если долго не собирать хорошие яблоки, змейка начинает звереть и резко ускоряться, а музыка — нарастать. Съешьте яблоко, чтобы успокоить её.</div>
+            <div><strong>Змеиное бешенство и похудение:</strong> без хороших яблок змейка кричит «ЕСТЬ!», ускоряется, а затем начинает худеть («Худею!») — если длина дойдёт до нуля, змейка погибнет от голода! Съешьте хорошее яблоко, чтобы успокоить её.</div>
           </div>
           <div class="rule-item">
             <span class="rule-icon">🪨</span>
