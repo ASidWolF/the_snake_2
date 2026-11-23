@@ -1,0 +1,10 @@
+{
+  "name": "The Snake 2",
+  "short_name": "Snake 2",
+  "description": "Современная аркадная Змейка с уровнями, змеиным бешенством, процедурной графикой и звуком",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#070d12",
+  "theme_color": "#070d12",
+  "orientation": "any"
+}

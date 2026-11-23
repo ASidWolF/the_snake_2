@@ -1,0 +1,26 @@
+# Зависимости и сборки
+node_modules/
+dist/
+dist-electron/
+release/
+coverage/
+*.tsbuildinfo
+
+# Локальная документация и привязки (решение владельца 2026-10-12)
+Docs/
+CLAUDE.md
+CLAUDE.local.md
+GEMINI.local.md
+.agents/
+.claude/
+
+# Секреты и переменные окружения
+.env
+.env.*
+.dev.vars
+
+# Системные и редакторские файлы
+.DS_Store
+*.log
+.vscode/
+.idea/
