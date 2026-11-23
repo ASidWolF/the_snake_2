@@ -8,6 +8,7 @@ import type { IStorageAdapter, Unsubscribe } from '../contracts/actions.ts';
 import type {
   AudioSettings,
   DifficultyKey,
+  LanguageKey,
   TouchControlMode,
   UserSettings,
 } from '../contracts/messages.ts';
@@ -29,6 +30,11 @@ function sanitizeSettings(raw: unknown): UserSettings {
     return DEFAULT_USER_SETTINGS;
   }
   const obj = raw as Record<string, unknown>;
+  const language: LanguageKey =
+    obj.language === 'ru' || obj.language === 'en'
+      ? obj.language
+      : DEFAULT_USER_SETTINGS.language;
+
   const difficulty: DifficultyKey =
     typeof obj.difficulty === 'string' && obj.difficulty in DIFFICULTY_PROFILES
       ? (obj.difficulty as DifficultyKey)
@@ -70,7 +76,7 @@ function sanitizeSettings(raw: unknown): UserSettings {
       ? obj.lastPlayerName.trim().slice(0, SCORING_PROFILE.maxPlayerNameLength)
       : '';
 
-  return { difficulty, audio, touchControls, lastPlayerName };
+  return { language, difficulty, audio, touchControls, lastPlayerName };
 }
 
 export class SettingsStore {

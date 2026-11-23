@@ -121,7 +121,10 @@ export interface AudioSettings {
 
 export type TouchControlMode = 'auto' | 'dpad' | 'swipe';
 
+export type LanguageKey = 'ru' | 'en';
+
 export interface UserSettings {
+  readonly language: LanguageKey;
   readonly difficulty: DifficultyKey;
   readonly audio: AudioSettings;
   readonly touchControls: TouchControlMode;

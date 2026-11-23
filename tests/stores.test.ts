@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { IStorageAdapter } from '../src/core/contracts/actions.ts';
+import { I18N_PROFILES } from '../src/core/profiles/i18nProfile.ts';
 import {
   LeaderboardStore,
   sanitizePlayerName,
@@ -20,19 +21,30 @@ function createMemoryStorage(): IStorageAdapter {
 }
 
 describe('SettingsStore и LeaderboardStore', () => {
-  it('сохраняет, загружает и валидирует настройки громкости и сложности', async () => {
+  it('сохраняет, загружает и валидирует настройки языка, громкости и сложности', async () => {
     const storage = createMemoryStorage();
     const store1 = new SettingsStore(storage);
-    store1.update({ difficulty: 'hard' });
+    store1.update({ language: 'en', difficulty: 'hard' });
     store1.updateAudio({ masterVolume: 1.5, musicVolume: -0.2, sfxVolume: 0.4, muted: true });
 
     const store2 = new SettingsStore(storage);
     const loaded = await store2.load();
+    expect(loaded.language).toBe('en');
     expect(loaded.difficulty).toBe('hard');
     expect(loaded.audio.masterVolume).toBe(1);
     expect(loaded.audio.musicVolume).toBe(0);
     expect(loaded.audio.sfxVolume).toBe(0.4);
     expect(loaded.audio.muted).toBe(true);
+  });
+
+  it('содержит полные словари RU и EN с одинаковым набором ключей', () => {
+    const ruKeys = Object.keys(I18N_PROFILES.ru).sort();
+    const enKeys = Object.keys(I18N_PROFILES.en).sort();
+    expect(enKeys).toEqual(ruKeys);
+    expect(I18N_PROFILES.ru.speechYum).toBe('Ням!');
+    expect(I18N_PROFILES.en.speechYum).toBe('Yum!');
+    expect(I18N_PROFILES.ru.speechShrinking).toBe('Худею!');
+    expect(I18N_PROFILES.en.speechShrinking).toBe('Shrinking!');
   });
 
   it('сортирует рекорды, фильтрует по сложности и санитизирует имена', async () => {

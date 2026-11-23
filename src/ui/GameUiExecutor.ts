@@ -1,17 +1,17 @@
 /**
  * Роль: Исполнитель UI + Датчик кнопок интерфейса.
- * Отображает состояние из GameStore, SettingsStore, LeaderboardStore и SavedRunStore.
- * Не хранит авторитетного игрового состояния и не содержит игровой логики:
- * все действия отправляются через GameCommand и методы хранилищ.
+ * Отображает состояние из GameStore, SettingsStore, LeaderboardStore и SavedRunStore
+ * с полной поддержкой переключения языка (Русский / English).
+ * Не хранит авторитетного игрового состояния и не содержит игровой логики.
  */
 
 import type { IStorageAdapter } from '../core/contracts/actions.ts';
 import type {
-  DeathReason,
   DifficultyKey,
   Direction,
   GameCommand,
   GameSnapshot,
+  LanguageKey,
   TouchControlMode,
   UserSettings,
 } from '../core/contracts/messages.ts';
@@ -19,6 +19,7 @@ import {
   DIFFICULTY_ORDER,
   DIFFICULTY_PROFILES,
 } from '../core/profiles/difficultyProfiles.ts';
+import { I18N_PROFILES } from '../core/profiles/i18nProfile.ts';
 import type { LeaderboardStore } from '../core/stores/LeaderboardStore.ts';
 import type { SavedRunStore } from '../core/stores/SavedRunStore.ts';
 import type { SettingsStore } from '../core/stores/SettingsStore.ts';
@@ -37,13 +38,6 @@ export interface GameUiCallbacks {
   readonly onUserGesture: () => void;
   readonly onSaveCurrentRun: () => void;
 }
-
-const DEATH_REASON_TEXT: Readonly<Record<DeathReason, string>> = {
-  self_collision: 'Змейка врезалась в собственный хвост.',
-  stone_too_heavy: 'Камень оказался слишком тяжёлым — длина змейки должна быть больше веса камня.',
-  stone_hit_snake: 'Отлетевший камень задел тело змейки.',
-  starvation: 'Змейка похудела до нуля от голода во время бешенства!',
-};
 
 function escapeHtml(value: string): string {
   return value
@@ -71,9 +65,12 @@ export class GameUiExecutor {
   private readonly dpadEl: HTMLElement;
 
   // Элементы живого HUD (обновляются без перестройки DOM)
+  private readonly hudLevelLabelEl: HTMLElement;
   private readonly hudLevelEl: HTMLElement;
   private readonly hudApplesEl: HTMLElement;
+  private readonly hudLengthLabelEl: HTMLElement;
   private readonly hudLengthEl: HTMLElement;
+  private readonly hudScoreLabelEl: HTMLElement;
   private readonly hudScoreEl: HTMLElement;
   private readonly hudNextLifeEl: HTMLElement;
   private readonly hudSpeedEl: HTMLElement;
@@ -81,6 +78,8 @@ export class GameUiExecutor {
   private readonly hudFrenzyFillEl: HTMLElement;
   private readonly hudLivesEl: HTMLElement;
   private readonly hudMuteBtn: HTMLButtonElement;
+  private readonly hudSettingsBtn: HTMLButtonElement;
+  private readonly hudPauseBtn: HTMLButtonElement;
 
   private readonly settingsStore: SettingsStore;
   private readonly leaderboardStore: LeaderboardStore;
@@ -114,9 +113,9 @@ export class GameUiExecutor {
       <div class="app-shell">
         <header class="hud hidden" id="hud">
           <div class="hud-group">
-            <div class="hud-pill level-pill"><span class="label">Ур.</span><span class="value" id="hud-level">1</span></div>
+            <div class="hud-pill level-pill"><span class="label" id="hud-level-label">Ур.</span><span class="value" id="hud-level">1</span></div>
             <div class="hud-pill apples-pill"><span>🍎</span><span class="value" id="hud-apples">0/0</span></div>
-            <div class="hud-pill"><span class="label">Длина</span><span class="value" id="hud-length">3</span></div>
+            <div class="hud-pill"><span class="label" id="hud-length-label">Длина</span><span class="value" id="hud-length">3</span></div>
           </div>
 
           <div class="frenzy-box">
@@ -131,16 +130,16 @@ export class GameUiExecutor {
 
           <div class="hud-group">
             <div class="hud-pill score-pill">
-              <span class="label">Очки</span>
+              <span class="label" id="hud-score-label">Очки</span>
               <span class="value" id="hud-score">0</span>
-              <span class="label" id="hud-next-life" title="До дополнительной жизни">· +♥ 1200</span>
+              <span class="label" id="hud-next-life">· +♥ 1200</span>
             </div>
             <div class="hud-pill">
               <div class="lives-row" id="hud-lives"></div>
             </div>
-            <button class="hud-icon-btn" id="hud-mute-btn" title="Звук (M)" aria-label="Звук">🔊</button>
-            <button class="hud-icon-btn" id="hud-settings-btn" title="Настройки" aria-label="Настройки">⚙️</button>
-            <button class="hud-icon-btn" id="hud-pause-btn" title="Пауза (Space / P)" aria-label="Пауза">⏸</button>
+            <button class="hud-icon-btn" id="hud-mute-btn">🔊</button>
+            <button class="hud-icon-btn" id="hud-settings-btn">⚙️</button>
+            <button class="hud-icon-btn" id="hud-pause-btn">⏸</button>
           </div>
         </header>
 
@@ -149,13 +148,13 @@ export class GameUiExecutor {
           <div class="overlay-layer" id="overlay-layer"></div>
         </main>
 
-        <section class="touch-dpad" id="touch-dpad" aria-label="Сенсорное управление">
+        <section class="touch-dpad" id="touch-dpad">
           <div class="dpad-grid">
-            <button class="dpad-btn dpad-up" data-dir="UP" aria-label="Вверх">▲</button>
-            <button class="dpad-btn dpad-left" data-dir="LEFT" aria-label="Влево">◀</button>
-            <button class="dpad-btn dpad-center" data-action="pause" aria-label="Пауза">⏸</button>
-            <button class="dpad-btn dpad-right" data-dir="RIGHT" aria-label="Вправо">▶</button>
-            <button class="dpad-btn dpad-down" data-dir="DOWN" aria-label="Вниз">▼</button>
+            <button class="dpad-btn dpad-up" data-dir="UP">▲</button>
+            <button class="dpad-btn dpad-left" data-dir="LEFT">◀</button>
+            <button class="dpad-btn dpad-center" data-action="pause">⏸</button>
+            <button class="dpad-btn dpad-right" data-dir="RIGHT">▶</button>
+            <button class="dpad-btn dpad-down" data-dir="DOWN">▼</button>
           </div>
         </section>
       </div>
@@ -167,9 +166,12 @@ export class GameUiExecutor {
     this.overlayEl = root.querySelector('#overlay-layer')!;
     this.dpadEl = root.querySelector('#touch-dpad')!;
 
+    this.hudLevelLabelEl = root.querySelector('#hud-level-label')!;
     this.hudLevelEl = root.querySelector('#hud-level')!;
     this.hudApplesEl = root.querySelector('#hud-apples')!;
+    this.hudLengthLabelEl = root.querySelector('#hud-length-label')!;
     this.hudLengthEl = root.querySelector('#hud-length')!;
+    this.hudScoreLabelEl = root.querySelector('#hud-score-label')!;
     this.hudScoreEl = root.querySelector('#hud-score')!;
     this.hudNextLifeEl = root.querySelector('#hud-next-life')!;
     this.hudSpeedEl = root.querySelector('#hud-speed')!;
@@ -177,12 +179,14 @@ export class GameUiExecutor {
     this.hudFrenzyFillEl = root.querySelector('#hud-frenzy-fill')!;
     this.hudLivesEl = root.querySelector('#hud-lives')!;
     this.hudMuteBtn = root.querySelector('#hud-mute-btn')!;
+    this.hudSettingsBtn = root.querySelector('#hud-settings-btn')!;
+    this.hudPauseBtn = root.querySelector('#hud-pause-btn')!;
 
-    this.bindStaticControls(root);
+    this.bindStaticControls();
     this.syncAll(initialSnapshot, settingsStore.getSnapshot());
   }
 
-  private bindStaticControls(root: HTMLElement): void {
+  private bindStaticControls(): void {
     this.hudMuteBtn.addEventListener('click', () => {
       this.callbacks.onUserGesture();
       const audio = this.settingsStore.getSnapshot().audio;
@@ -190,7 +194,7 @@ export class GameUiExecutor {
       this.callbacks.onUiClick();
     });
 
-    root.querySelector('#hud-settings-btn')!.addEventListener('click', () => {
+    this.hudSettingsBtn.addEventListener('click', () => {
       this.callbacks.onUserGesture();
       this.callbacks.onUiClick();
       if (this.lastSnapshot.phase === 'playing') {
@@ -200,13 +204,12 @@ export class GameUiExecutor {
       this.forceOverlayRender();
     });
 
-    root.querySelector('#hud-pause-btn')!.addEventListener('click', () => {
+    this.hudPauseBtn.addEventListener('click', () => {
       this.callbacks.onUserGesture();
       this.callbacks.onUiClick();
       this.callbacks.onCommand({ type: 'TOGGLE_PAUSE' });
     });
 
-    // Сенсорный D-pad: срабатывает на pointerdown для минимальной задержки
     this.dpadEl.addEventListener('pointerdown', (e) => {
       const btn = (e.target as HTMLElement).closest<HTMLButtonElement>('.dpad-btn');
       if (!btn) return;
@@ -227,7 +230,14 @@ export class GameUiExecutor {
     const prevRunId = this.lastSnapshot.runId;
     this.lastSnapshot = snapshot;
 
-    if (prevRunId !== snapshot.runId || (prevPhase !== 'game_over' && snapshot.phase === 'game_over')) {
+    if (typeof document !== 'undefined') {
+      document.documentElement.lang = settings.language;
+    }
+
+    if (
+      prevRunId !== snapshot.runId ||
+      (prevPhase !== 'game_over' && snapshot.phase === 'game_over')
+    ) {
       this.savedRecordRank = null;
     }
 
@@ -244,6 +254,7 @@ export class GameUiExecutor {
       snapshot.deathAnimSec > 0;
 
     const key = [
+      settings.language,
       snapshot.phase,
       isDeathAnimating ? 'dying' : 'idle',
       this.activeModal,
@@ -269,7 +280,6 @@ export class GameUiExecutor {
 
   private requestReturnToMenu(snapshot: GameSnapshot): void {
     this.callbacks.onUiClick();
-    // Всегда сохраняем текущий прогресс партии, чтобы работала кнопка «Продолжить»
     this.callbacks.onSaveCurrentRun();
 
     const needsRecordPrompt =
@@ -286,10 +296,16 @@ export class GameUiExecutor {
     this.callbacks.onCommand({ type: 'RETURN_TO_MENU' });
   }
 
-  private saveRecordForSnapshot(snapshot: GameSnapshot, rawName: string): number {
+  private saveRecordForSnapshot(
+    snapshot: GameSnapshot,
+    rawName: string,
+    language: LanguageKey
+  ): number {
+    const t = I18N_PROFILES[language];
     const { entry, rank } = this.leaderboardStore.addRecord({
       runId: snapshot.runId,
       playerName: rawName,
+      defaultPlayerName: t.defaultPlayerName,
       score: snapshot.score,
       level: snapshot.highestLevel,
       apples: snapshot.totalApplesEaten,
@@ -306,6 +322,18 @@ export class GameUiExecutor {
     this.hudEl.classList.toggle('hidden', !inRun);
     if (!inRun) return;
 
+    const t = I18N_PROFILES[settings.language];
+    this.hudLevelLabelEl.textContent = t.hudLevel;
+    this.hudLengthLabelEl.textContent = t.hudLength;
+    this.hudScoreLabelEl.textContent = t.hudScore;
+    this.hudNextLifeEl.title = t.hudNextLifeTooltip;
+    this.hudMuteBtn.title = t.hudMuteTitle;
+    this.hudMuteBtn.setAttribute('aria-label', t.hudMuteTitle);
+    this.hudSettingsBtn.title = t.hudSettingsTitle;
+    this.hudSettingsBtn.setAttribute('aria-label', t.hudSettingsTitle);
+    this.hudPauseBtn.title = t.hudPauseTitle;
+    this.hudPauseBtn.setAttribute('aria-label', t.hudPauseTitle);
+
     this.hudLevelEl.textContent = String(snapshot.levelStats.level);
     const collected =
       snapshot.levelStats.initialGoodApples - snapshot.goodApples.length;
@@ -315,21 +343,21 @@ export class GameUiExecutor {
 
     const toNextLife = Math.max(0, snapshot.nextLifeScore - snapshot.score);
     this.hudNextLifeEl.textContent =
-      snapshot.lives >= snapshot.maxLives ? '· МАКС ♥' : `· +♥ ${toNextLife}`;
+      snapshot.lives >= snapshot.maxLives ? t.hudMaxLives : `· +♥ ${toNextLife}`;
 
-    this.hudSpeedEl.textContent = `${snapshot.effectiveSpeed.toFixed(1)} ш/с`;
+    this.hudSpeedEl.textContent = `${snapshot.effectiveSpeed.toFixed(1)} ${t.hudSpeedUnit}`;
     const frenzyPct = Math.round(snapshot.frenzy.level * 100);
     this.hudFrenzyFillEl.style.width = `${frenzyPct}%`;
 
     this.hudFrenzyStatusEl.classList.remove('active', 'peak');
     if (snapshot.frenzy.level >= 0.98) {
-      this.hudFrenzyStatusEl.textContent = '🔥 БЕШЕНСТВО!';
+      this.hudFrenzyStatusEl.textContent = t.hudFrenzyPeak;
       this.hudFrenzyStatusEl.classList.add('peak');
     } else if (snapshot.frenzy.active) {
-      this.hudFrenzyStatusEl.textContent = `⚡ Звереет ${frenzyPct}%`;
+      this.hudFrenzyStatusEl.textContent = `${t.hudFrenzyRising} ${frenzyPct}%`;
       this.hudFrenzyStatusEl.classList.add('active');
     } else {
-      this.hudFrenzyStatusEl.textContent = 'Спокойна';
+      this.hudFrenzyStatusEl.textContent = t.hudCalm;
     }
 
     let heartsHtml = '';
@@ -356,9 +384,9 @@ export class GameUiExecutor {
       if (this.activeModal === 'settings') {
         this.renderSettingsModal(settings);
       } else if (this.activeModal === 'leaderboard') {
-        this.renderLeaderboardModal();
+        this.renderLeaderboardModal(settings);
       } else if (this.activeModal === 'rules') {
-        this.renderRulesModal();
+        this.renderRulesModal(settings);
       } else if (this.activeModal === 'save_record') {
         this.renderSaveRecordModal(snapshot, settings, false);
       } else {
@@ -384,13 +412,13 @@ export class GameUiExecutor {
         this.renderMainMenu(settings);
         break;
       case 'paused':
-        this.renderPauseOverlay(snapshot);
+        this.renderPauseOverlay(snapshot, settings);
         break;
       case 'life_lost':
-        this.renderLifeLostOverlay(snapshot);
+        this.renderLifeLostOverlay(snapshot, settings);
         break;
       case 'level_complete':
-        this.renderLevelCompleteOverlay(snapshot);
+        this.renderLevelCompleteOverlay(snapshot, settings);
         break;
       case 'game_over':
         this.renderGameOverOverlay(snapshot, settings);
@@ -399,8 +427,9 @@ export class GameUiExecutor {
   }
 
   private renderMainMenu(settings: UserSettings): void {
+    const t = I18N_PROFILES[settings.language];
     const modeLabel =
-      this.storage.platformName === 'desktop' ? 'ПК-приложение' : 'Веб-версия';
+      this.storage.platformName === 'desktop' ? t.modeDesktop : t.modeWeb;
     const bestScore = this.leaderboardStore.getBestScore(settings.difficulty);
     const savedRun = this.savedRunStore.getSnapshot();
 
@@ -410,10 +439,10 @@ export class GameUiExecutor {
       return `
         <button class="diff-card ${selected}" data-difficulty="${key}" style="--diff-accent: ${p.accentColor}">
           <div class="diff-top">
-            <span class="diff-name">${p.label}</span>
+            <span class="diff-name">${t.difficultyLabels[key]}</span>
             <span class="diff-mult">×${p.scoreMultiplier.toFixed(1)}</span>
           </div>
-          <div class="diff-desc">${p.shortDesc}</div>
+          <div class="diff-desc">${t.difficultyDescs[key]}</div>
         </button>
       `;
     }).join('');
@@ -421,46 +450,59 @@ export class GameUiExecutor {
     const continueBtn = savedRun
       ? `
         <button class="btn btn-continue" id="btn-continue">
-          <span>▶ Продолжить игру</span>
-          <span class="btn-meta">Уровень ${savedRun.levelStats.level} • Очки: ${savedRun.score} • ${DIFFICULTY_PROFILES[savedRun.difficulty].label} • ${'♥'.repeat(savedRun.lives)}</span>
+          <span>${t.btnContinue}</span>
+          <span class="btn-meta">${t.hudLevelShort} ${savedRun.levelStats.level} • ${t.hudPointsWord}: ${savedRun.score} • ${t.difficultyLabels[savedRun.difficulty]} • ${'♥'.repeat(savedRun.lives)}</span>
         </button>
       `
       : '';
 
     const quitBtn = this.storage.quitApp
-      ? `<button class="btn btn-ghost" id="btn-quit">Выход</button>`
+      ? `<button class="btn btn-ghost" id="btn-quit">${t.btnQuit}</button>`
       : '';
 
     this.overlayEl.innerHTML = `
       <div class="card">
         <div class="brand-header">
-          <div class="brand-badge">🐍 ${modeLabel} • 100% процедурно</div>
+          <div class="menu-topbar">
+            <div class="brand-badge">🐍 ${modeLabel} • ${t.badgeProcedural}</div>
+            <div class="lang-switch" role="group" aria-label="${t.settingLanguage}">
+              <button class="lang-btn ${settings.language === 'ru' ? 'active' : ''}" data-lang="ru">RU</button>
+              <button class="lang-btn ${settings.language === 'en' ? 'active' : ''}" data-lang="en">EN</button>
+            </div>
+          </div>
           <h1 class="brand-title">THE SNAKE 2</h1>
           <p class="brand-subtitle">
-            Уровневая прогрессия, змеиное бешенство, толкаемые камни и адаптивный саундтрек.
-            ${bestScore > 0 ? `Лучший счёт (${DIFFICULTY_PROFILES[settings.difficulty].label}): <strong>${bestScore}</strong>` : ''}
+            ${t.menuSubtitle}
+            ${bestScore > 0 ? `${t.menuBestScore} (${t.difficultyLabels[settings.difficulty]}): <strong>${bestScore}</strong>` : ''}
           </p>
         </div>
 
-        <div class="section-label">Уровень сложности (для новой игры)</div>
+        <div class="section-label">${t.menuDifficultyLabel}</div>
         <div class="difficulty-grid">${diffCards}</div>
 
         <div class="btn-stack">
           ${continueBtn}
-          <button class="btn btn-primary" id="btn-play">${savedRun ? '✨ Новая игра (с 1 уровня)' : '▶ Начать игру'}</button>
+          <button class="btn btn-primary" id="btn-play">${savedRun ? t.btnNewGameFromL1 : t.btnStartGame}</button>
           <div class="btn-row">
-            <button class="btn" id="btn-leaderboard">🏆 Рекорды</button>
-            <button class="btn" id="btn-settings">⚙️ Настройки</button>
-            <button class="btn" id="btn-rules">📖 Правила</button>
+            <button class="btn" id="btn-leaderboard">${t.btnLeaderboard}</button>
+            <button class="btn" id="btn-settings">${t.btnSettings}</button>
+            <button class="btn" id="btn-rules">${t.btnRules}</button>
           </div>
           ${quitBtn}
         </div>
 
-        <div class="menu-footer">
-          ПК: WASD / Стрелки, Space — пауза, M — звук · Телефоны и планшеты: свайпы или D-pad
-        </div>
+        <div class="menu-footer">${t.menuFooter}</div>
       </div>
     `;
+
+    this.overlayEl.querySelectorAll<HTMLButtonElement>('.lang-btn').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        this.callbacks.onUserGesture();
+        this.callbacks.onUiClick();
+        const lang = btn.dataset.lang as LanguageKey;
+        this.settingsStore.update({ language: lang });
+      });
+    });
 
     this.overlayEl.querySelectorAll<HTMLButtonElement>('.diff-card').forEach((btn) => {
       btn.addEventListener('click', () => {
@@ -518,33 +560,38 @@ export class GameUiExecutor {
     });
   }
 
-  private renderSaveRecordActionButton(snapshot: GameSnapshot): string {
+  private renderSaveRecordActionButton(
+    snapshot: GameSnapshot,
+    language: LanguageKey
+  ): string {
     if (snapshot.score <= 0) return '';
+    const t = I18N_PROFILES[language];
     const alreadySaved = this.leaderboardStore.hasSavedScore(
       snapshot.runId,
       snapshot.score
     );
     const label = alreadySaved
-      ? `✓ Рекорд записан (${snapshot.score})`
-      : `🏆 Сохранить рекорд (${snapshot.score})`;
+      ? `${t.btnRecordSaved} (${snapshot.score})`
+      : `${t.btnSaveRecord} (${snapshot.score})`;
     return `<button class="btn btn-gold" id="btn-mid-save-record">${label}</button>`;
   }
 
-  private renderPauseOverlay(snapshot: GameSnapshot): void {
+  private renderPauseOverlay(snapshot: GameSnapshot, settings: UserSettings): void {
+    const t = I18N_PROFILES[settings.language];
     const diff = DIFFICULTY_PROFILES[snapshot.difficulty];
     this.overlayEl.innerHTML = `
       <div class="card">
-        <h2 class="modal-title">Пауза</h2>
-        <p class="modal-sub">Уровень ${snapshot.levelStats.level} • ${diff.label} (×${diff.scoreMultiplier.toFixed(1)})</p>
+        <h2 class="modal-title">${t.pauseTitle}</h2>
+        <p class="modal-sub">${t.hudLevelShort} ${snapshot.levelStats.level} • ${t.difficultyLabels[snapshot.difficulty]} (×${diff.scoreMultiplier.toFixed(1)})</p>
         <div class="stats-grid">
-          <div class="stat-box"><span class="k">Счёт</span><span class="v gold">${snapshot.score}</span></div>
-          <div class="stat-box"><span class="k">Осталось яблок</span><span class="v emerald">${snapshot.goodApples.length}</span></div>
+          <div class="stat-box"><span class="k">${t.hudScore}</span><span class="v gold">${snapshot.score}</span></div>
+          <div class="stat-box"><span class="k">${t.pauseRemainingApples}</span><span class="v emerald">${snapshot.goodApples.length}</span></div>
         </div>
         <div class="btn-stack">
-          <button class="btn btn-primary" id="btn-resume">▶ Продолжить</button>
-          ${this.renderSaveRecordActionButton(snapshot)}
-          <button class="btn" id="btn-pause-settings">⚙️ Громкость и управление</button>
-          <button class="btn btn-ghost" id="btn-pause-menu">⬅ В главное меню (прогресс сохранится)</button>
+          <button class="btn btn-primary" id="btn-resume">${t.btnResume}</button>
+          ${this.renderSaveRecordActionButton(snapshot, settings.language)}
+          <button class="btn" id="btn-pause-settings">${t.btnPauseSettings}</button>
+          <button class="btn btn-ghost" id="btn-pause-menu">${t.btnReturnToMenuKeep}</button>
         </div>
       </div>
     `;
@@ -572,23 +619,24 @@ export class GameUiExecutor {
     });
   }
 
-  private renderLifeLostOverlay(snapshot: GameSnapshot): void {
+  private renderLifeLostOverlay(snapshot: GameSnapshot, settings: UserSettings): void {
+    const t = I18N_PROFILES[settings.language];
     const reasonText = snapshot.lastDeathReason
-      ? DEATH_REASON_TEXT[snapshot.lastDeathReason]
-      : 'Произошло столкновение.';
+      ? t.deathReasons[snapshot.lastDeathReason]
+      : t.deathReasons.self_collision;
 
     this.overlayEl.innerHTML = `
       <div class="card">
-        <h2 class="modal-title" style="color: #fb7185;">Потеряна жизнь</h2>
+        <h2 class="modal-title" style="color: #fb7185;">${t.lifeLostTitle}</h2>
         <p class="modal-sub">${reasonText}</p>
         <div class="stats-grid">
-          <div class="stat-box"><span class="k">Осталось жизней</span><span class="v crimson">${'♥ '.repeat(snapshot.lives).trim()}</span></div>
-          <div class="stat-box"><span class="k">Текущий счёт</span><span class="v gold">${snapshot.score}</span></div>
+          <div class="stat-box"><span class="k">${t.lifeLostRemaining}</span><span class="v crimson">${'♥ '.repeat(snapshot.lives).trim()}</span></div>
+          <div class="stat-box"><span class="k">${t.lifeLostScore}</span><span class="v gold">${snapshot.score}</span></div>
         </div>
         <div class="btn-stack">
-          <button class="btn btn-primary" id="btn-retry">↻ Повторить уровень ${snapshot.levelStats.level}</button>
-          ${this.renderSaveRecordActionButton(snapshot)}
-          <button class="btn btn-ghost" id="btn-lost-menu">⬅ В главное меню (прогресс сохранится)</button>
+          <button class="btn btn-primary" id="btn-retry">${t.btnRetryLevel} ${snapshot.levelStats.level}</button>
+          ${this.renderSaveRecordActionButton(snapshot, settings.language)}
+          <button class="btn btn-ghost" id="btn-lost-menu">${t.btnReturnToMenuKeep}</button>
         </div>
       </div>
     `;
@@ -613,7 +661,11 @@ export class GameUiExecutor {
     });
   }
 
-  private renderLevelCompleteOverlay(snapshot: GameSnapshot): void {
+  private renderLevelCompleteOverlay(
+    snapshot: GameSnapshot,
+    settings: UserSettings
+  ): void {
+    const t = I18N_PROFILES[settings.language];
     const s = snapshot.lastLevelSummary;
     const stars = s ? s.efficiencyRating : 1;
     const starsHtml = [1, 2, 3]
@@ -623,20 +675,20 @@ export class GameUiExecutor {
     this.overlayEl.innerHTML = `
       <div class="card">
         <div class="stars-row">${starsHtml}</div>
-        <h2 class="modal-title" style="color: #34d399;">Уровень ${snapshot.levelStats.level} пройден!</h2>
-        <p class="modal-sub">Все хорошие яблоки собраны. Готовься к ускорению на уровне ${snapshot.levelStats.level + 1}!</p>
+        <h2 class="modal-title" style="color: #34d399;">${t.hudLevelShort} ${snapshot.levelStats.level} ${t.levelCompleteTitle}</h2>
+        <p class="modal-sub">${t.levelCompleteSub} ${snapshot.levelStats.level + 1}!</p>
 
         <div class="stats-grid">
-          <div class="stat-box"><span class="k">Ходы (эталон ${s?.parMoves ?? 0})</span><span class="v">${s?.moves ?? 0}</span></div>
-          <div class="stat-box"><span class="k">Ошибки</span><span class="v ${(s?.mistakes ?? 0) === 0 ? 'emerald' : 'crimson'}">${s?.mistakes ?? 0}</span></div>
-          <div class="stat-box"><span class="k">Бонус уровня</span><span class="v gold">+${s?.totalBonus ?? 0}</span></div>
-          <div class="stat-box"><span class="k">Общий счёт</span><span class="v gold">${snapshot.score}</span></div>
+          <div class="stat-box"><span class="k">${t.statMoves} (${t.statPar} ${s?.parMoves ?? 0})</span><span class="v">${s?.moves ?? 0}</span></div>
+          <div class="stat-box"><span class="k">${t.statMistakes}</span><span class="v ${(s?.mistakes ?? 0) === 0 ? 'emerald' : 'crimson'}">${s?.mistakes ?? 0}</span></div>
+          <div class="stat-box"><span class="k">${t.statLevelBonus}</span><span class="v gold">+${s?.totalBonus ?? 0}</span></div>
+          <div class="stat-box"><span class="k">${t.statTotalScore}</span><span class="v gold">${snapshot.score}</span></div>
         </div>
 
         <div class="btn-stack">
-          <button class="btn btn-primary" id="btn-next-level">➡ Уровень ${snapshot.levelStats.level + 1}</button>
-          ${this.renderSaveRecordActionButton(snapshot)}
-          <button class="btn btn-ghost" id="btn-clear-menu">⬅ В главное меню (прогресс сохранится)</button>
+          <button class="btn btn-primary" id="btn-next-level">${t.btnNextLevel} ${snapshot.levelStats.level + 1}</button>
+          ${this.renderSaveRecordActionButton(snapshot, settings.language)}
+          <button class="btn btn-ghost" id="btn-clear-menu">${t.btnReturnToMenuKeep}</button>
         </div>
       </div>
     `;
@@ -666,11 +718,11 @@ export class GameUiExecutor {
     settings: UserSettings,
     exitAfter: boolean
   ): void {
-    const diff = DIFFICULTY_PROFILES[snapshot.difficulty];
-    const title = exitAfter ? 'Выход в главное меню' : 'Сохранить рекорд';
+    const t = I18N_PROFILES[settings.language];
+    const title = exitAfter ? t.exitTitle : t.saveRecordTitle;
     const sub = exitAfter
-      ? `Прогресс (Ур. ${snapshot.levelStats.level}) сохранён — вы сможете нажать «Продолжить». Хотите также записать текущий счёт в таблицу рекордов?`
-      : `Уровень ${snapshot.levelStats.level} • ${diff.label}. При продолжении партии рекорд автоматически обновится без дубликатов.`;
+      ? `${t.exitSubPrefix} ${snapshot.levelStats.level}${t.exitSubSuffix}`
+      : `${t.hudLevelShort} ${snapshot.levelStats.level} • ${t.difficultyLabels[snapshot.difficulty]}. ${t.saveRecordSub}`;
 
     const alreadySaved = this.leaderboardStore.hasSavedScore(
       snapshot.runId,
@@ -683,13 +735,13 @@ export class GameUiExecutor {
         <p class="modal-sub">${sub}</p>
 
         <div class="stats-grid">
-          <div class="stat-box"><span class="k">Текущий счёт</span><span class="v gold">${snapshot.score}</span></div>
-          <div class="stat-box"><span class="k">Достигнут уровень</span><span class="v emerald">${snapshot.highestLevel}</span></div>
+          <div class="stat-box"><span class="k">${t.statCurrentScore}</span><span class="v gold">${snapshot.score}</span></div>
+          <div class="stat-box"><span class="k">${t.statReachedLevel}</span><span class="v emerald">${snapshot.highestLevel}</span></div>
         </div>
 
         ${
           alreadySaved && this.savedRecordRank !== null && !exitAfter
-            ? `<div class="saved-banner">Рекорд сохранён! Текущее место: #${this.savedRecordRank}</div>`
+            ? `<div class="saved-banner">${t.savedBannerRank} #${this.savedRecordRank}</div>`
             : `
               <form class="record-form" id="mid-record-form">
                 <input
@@ -697,11 +749,11 @@ export class GameUiExecutor {
                   id="mid-player-name-input"
                   type="text"
                   maxlength="18"
-                  placeholder="Ваше имя для таблицы рекордов"
+                  placeholder="${t.namePlaceholder}"
                   value="${escapeHtml(settings.lastPlayerName)}"
                 />
                 <button class="btn btn-primary" type="submit" style="padding: 10px 16px; font-size: 14px;">
-                  ${exitAfter ? 'Сохранить и выйти' : 'Сохранить'}
+                  ${exitAfter ? t.btnSaveAndExit : t.btnSave}
                 </button>
               </form>
             `
@@ -710,10 +762,10 @@ export class GameUiExecutor {
         <div class="btn-stack">
           ${
             exitAfter
-              ? `<button class="btn" id="btn-exit-without-record">💾 Выйти без записи рекорда (прогресс сохранён)</button>`
+              ? `<button class="btn" id="btn-exit-without-record">${t.btnExitWithoutRecord}</button>`
               : ''
           }
-          <button class="btn btn-ghost" id="btn-cancel-save-record">${exitAfter ? 'Отмена' : 'Назад'}</button>
+          <button class="btn btn-ghost" id="btn-cancel-save-record">${exitAfter ? t.btnCancel : t.btnBack}</button>
         </div>
       </div>
     `;
@@ -723,7 +775,7 @@ export class GameUiExecutor {
       e.preventDefault();
       this.callbacks.onUiClick();
       const input = this.overlayEl.querySelector<HTMLInputElement>('#mid-player-name-input');
-      this.saveRecordForSnapshot(snapshot, input?.value ?? '');
+      this.saveRecordForSnapshot(snapshot, input?.value ?? '', settings.language);
       if (exitAfter) {
         this.callbacks.onSaveCurrentRun();
         this.activeModal = 'none';
@@ -748,10 +800,10 @@ export class GameUiExecutor {
   }
 
   private renderGameOverOverlay(snapshot: GameSnapshot, settings: UserSettings): void {
-    const diff = DIFFICULTY_PROFILES[snapshot.difficulty];
+    const t = I18N_PROFILES[settings.language];
     const reasonText = snapshot.lastDeathReason
-      ? DEATH_REASON_TEXT[snapshot.lastDeathReason]
-      : 'Жизни закончились.';
+      ? t.deathReasons[snapshot.lastDeathReason]
+      : t.gameOverDefaultReason;
 
     const alreadySaved = this.leaderboardStore.hasSavedScore(
       snapshot.runId,
@@ -762,7 +814,7 @@ export class GameUiExecutor {
       snapshot.score <= 0
         ? ''
         : alreadySaved && this.savedRecordRank !== null
-          ? `<div class="saved-banner">Рекорд сохранён! Место в таблице: #${this.savedRecordRank}</div>`
+          ? `<div class="saved-banner">${t.savedBannerRank} #${this.savedRecordRank}</div>`
           : `
             <form class="record-form" id="record-form">
               <input
@@ -770,32 +822,32 @@ export class GameUiExecutor {
                 id="player-name-input"
                 type="text"
                 maxlength="18"
-                placeholder="Ваше имя для таблицы рекордов"
+                placeholder="${t.namePlaceholder}"
                 value="${escapeHtml(settings.lastPlayerName)}"
               />
-              <button class="btn btn-primary" type="submit" style="padding: 10px 16px; font-size: 14px;">Сохранить</button>
+              <button class="btn btn-primary" type="submit" style="padding: 10px 16px; font-size: 14px;">${t.btnSave}</button>
             </form>
           `;
 
     this.overlayEl.innerHTML = `
       <div class="card">
-        <h2 class="modal-title" style="color: #f43f5e;">Игра окончена</h2>
-        <p class="modal-sub">${reasonText} • ${diff.label}</p>
+        <h2 class="modal-title" style="color: #f43f5e;">${t.gameOverTitle}</h2>
+        <p class="modal-sub">${reasonText} • ${t.difficultyLabels[snapshot.difficulty]}</p>
 
         <div class="stats-grid">
-          <div class="stat-box"><span class="k">Итоговый счёт</span><span class="v gold">${snapshot.score}</span></div>
-          <div class="stat-box"><span class="k">Достигнут уровень</span><span class="v emerald">${snapshot.highestLevel}</span></div>
-          <div class="stat-box"><span class="k">Собрано яблок</span><span class="v">${snapshot.totalApplesEaten}</span></div>
-          <div class="stat-box"><span class="k">Макс. длина</span><span class="v">${snapshot.maxLength}</span></div>
+          <div class="stat-box"><span class="k">${t.statFinalScore}</span><span class="v gold">${snapshot.score}</span></div>
+          <div class="stat-box"><span class="k">${t.statReachedLevel}</span><span class="v emerald">${snapshot.highestLevel}</span></div>
+          <div class="stat-box"><span class="k">${t.statApplesCollected}</span><span class="v">${snapshot.totalApplesEaten}</span></div>
+          <div class="stat-box"><span class="k">${t.statMaxLength}</span><span class="v">${snapshot.maxLength}</span></div>
         </div>
 
         ${recordBlock}
 
         <div class="btn-stack">
-          <button class="btn btn-primary" id="btn-play-again">↻ Играть снова</button>
+          <button class="btn btn-primary" id="btn-play-again">${t.btnPlayAgain}</button>
           <div class="btn-row">
-            <button class="btn" id="btn-go-lb">🏆 Рекорды</button>
-            <button class="btn btn-ghost" id="btn-go-menu">В меню</button>
+            <button class="btn" id="btn-go-lb">${t.btnLeaderboard}</button>
+            <button class="btn btn-ghost" id="btn-go-menu">${t.btnToMenu}</button>
           </div>
         </div>
       </div>
@@ -806,7 +858,7 @@ export class GameUiExecutor {
       e.preventDefault();
       this.callbacks.onUiClick();
       const input = this.overlayEl.querySelector<HTMLInputElement>('#player-name-input');
-      this.saveRecordForSnapshot(snapshot, input?.value ?? '');
+      this.saveRecordForSnapshot(snapshot, input?.value ?? '', settings.language);
       this.forceOverlayRender();
     });
 
@@ -833,6 +885,7 @@ export class GameUiExecutor {
   }
 
   private renderSettingsModal(settings: UserSettings): void {
+    const t = I18N_PROFILES[settings.language];
     const a = settings.audio;
     const masterPct = Math.round(a.masterVolume * 100);
     const musicPct = Math.round(a.musicVolume * 100);
@@ -840,12 +893,22 @@ export class GameUiExecutor {
 
     this.overlayEl.innerHTML = `
       <div class="card">
-        <h2 class="modal-title">Настройки</h2>
-        <p class="modal-sub">Процедурный звук Web Audio и управление</p>
+        <h2 class="modal-title">${t.settingsTitle}</h2>
+        <p class="modal-sub">${t.settingsSub}</p>
 
         <div class="setting-row">
           <div class="setting-top">
-            <span>Общая громкость</span>
+            <span>${t.settingLanguage}</span>
+          </div>
+          <div class="segmented" style="grid-template-columns: repeat(2, 1fr);">
+            <button class="seg-btn ${settings.language === 'ru' ? 'active' : ''}" data-lang="ru">🇷🇺 Русский</button>
+            <button class="seg-btn ${settings.language === 'en' ? 'active' : ''}" data-lang="en">🇬🇧 English</button>
+          </div>
+        </div>
+
+        <div class="setting-row">
+          <div class="setting-top">
+            <span>${t.settingMaster}</span>
             <span class="pct" id="val-master">${masterPct}%</span>
           </div>
           <input type="range" id="rng-master" min="0" max="100" value="${masterPct}" />
@@ -853,7 +916,7 @@ export class GameUiExecutor {
 
         <div class="setting-row">
           <div class="setting-top">
-            <span>Музыка</span>
+            <span>${t.settingMusic}</span>
             <span class="pct" id="val-music">${musicPct}%</span>
           </div>
           <input type="range" id="rng-music" min="0" max="100" value="${musicPct}" />
@@ -861,7 +924,7 @@ export class GameUiExecutor {
 
         <div class="setting-row">
           <div class="setting-top">
-            <span>Звуковые эффекты (SFX)</span>
+            <span>${t.settingSfx}</span>
             <span class="pct" id="val-sfx">${sfxPct}%</span>
           </div>
           <input type="range" id="rng-sfx" min="0" max="100" value="${sfxPct}" />
@@ -869,21 +932,29 @@ export class GameUiExecutor {
 
         <div class="setting-row">
           <div class="setting-top">
-            <span>Сенсорный D-pad (телефоны / планшеты)</span>
+            <span>${t.settingTouch}</span>
           </div>
           <div class="segmented">
-            <button class="seg-btn ${settings.touchControls === 'auto' ? 'active' : ''}" data-touch="auto">Авто</button>
-            <button class="seg-btn ${settings.touchControls === 'dpad' ? 'active' : ''}" data-touch="dpad">Всегда</button>
-            <button class="seg-btn ${settings.touchControls === 'swipe' ? 'active' : ''}" data-touch="swipe">Только свайп</button>
+            <button class="seg-btn ${settings.touchControls === 'auto' ? 'active' : ''}" data-touch="auto">${t.touchAuto}</button>
+            <button class="seg-btn ${settings.touchControls === 'dpad' ? 'active' : ''}" data-touch="dpad">${t.touchAlways}</button>
+            <button class="seg-btn ${settings.touchControls === 'swipe' ? 'active' : ''}" data-touch="swipe">${t.touchSwipeOnly}</button>
           </div>
         </div>
 
         <div class="btn-row" style="margin-top: 14px;">
-          <button class="btn" id="btn-mute-toggle">${a.muted ? '🔇 Звук выкл.' : '🔊 Звук вкл.'}</button>
-          <button class="btn btn-primary" id="btn-close-modal">Готово</button>
+          <button class="btn" id="btn-mute-toggle">${a.muted ? t.btnSoundOff : t.btnSoundOn}</button>
+          <button class="btn btn-primary" id="btn-close-modal">${t.btnDone}</button>
         </div>
       </div>
     `;
+
+    this.overlayEl.querySelectorAll<HTMLButtonElement>('[data-lang]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        this.callbacks.onUiClick();
+        const lang = btn.dataset.lang as LanguageKey;
+        this.settingsStore.update({ language: lang });
+      });
+    });
 
     const bindSlider = (
       id: string,
@@ -907,7 +978,7 @@ export class GameUiExecutor {
     bindSlider('rng-music', 'val-music', 'musicVolume');
     bindSlider('rng-sfx', 'val-sfx', 'sfxVolume');
 
-    this.overlayEl.querySelectorAll<HTMLButtonElement>('.seg-btn').forEach((btn) => {
+    this.overlayEl.querySelectorAll<HTMLButtonElement>('[data-touch]').forEach((btn) => {
       btn.addEventListener('click', () => {
         this.callbacks.onUiClick();
         const mode = btn.dataset.touch as TouchControlMode;
@@ -931,34 +1002,35 @@ export class GameUiExecutor {
     });
   }
 
-  private renderLeaderboardModal(): void {
+  private renderLeaderboardModal(settings: UserSettings): void {
+    const t = I18N_PROFILES[settings.language];
     const entries = this.leaderboardStore.getEntries(this.leaderboardFilter);
     const tabs: Array<{ key: DifficultyKey | 'all'; label: string }> = [
-      { key: 'all', label: 'Все' },
-      { key: 'easy', label: 'Легко' },
-      { key: 'normal', label: 'Нормально' },
-      { key: 'hard', label: 'Сложно' },
+      { key: 'all', label: t.lbTabAll },
+      { key: 'easy', label: t.difficultyLabels.easy },
+      { key: 'normal', label: t.difficultyLabels.normal },
+      { key: 'hard', label: t.difficultyLabels.hard },
     ];
 
     const tabsHtml = tabs
       .map(
-        (t) =>
-          `<button class="tab-btn ${this.leaderboardFilter === t.key ? 'active' : ''}" data-filter="${t.key}">${t.label}</button>`
+        (tab) =>
+          `<button class="tab-btn ${this.leaderboardFilter === tab.key ? 'active' : ''}" data-filter="${tab.key}">${tab.label}</button>`
       )
       .join('');
 
     const bodyHtml =
       entries.length === 0
-        ? `<div class="empty-note">Рекордов пока нет — сыграйте первую партию!</div>`
+        ? `<div class="empty-note">${t.lbEmpty}</div>`
         : `
           <table class="lb-table">
             <thead>
               <tr>
                 <th>#</th>
-                <th>Игрок</th>
-                <th>Очки</th>
-                <th>Ур.</th>
-                <th>Сложность</th>
+                <th>${t.lbColPlayer}</th>
+                <th>${t.lbColScore}</th>
+                <th>${t.lbColLevel}</th>
+                <th>${t.lbColDifficulty}</th>
               </tr>
             </thead>
             <tbody>
@@ -972,7 +1044,7 @@ export class GameUiExecutor {
                       <td>${escapeHtml(e.playerName)}</td>
                       <td>${e.score}</td>
                       <td>${e.level}</td>
-                      <td>${DIFFICULTY_PROFILES[e.difficulty].label}</td>
+                      <td>${t.difficultyLabels[e.difficulty]}</td>
                     </tr>
                   `;
                 })
@@ -981,15 +1053,18 @@ export class GameUiExecutor {
           </table>
         `;
 
+    const storageText =
+      this.storage.platformName === 'desktop' ? t.lbStorageDesktop : t.lbStorageWeb;
+
     this.overlayEl.innerHTML = `
       <div class="card wide">
-        <h2 class="modal-title">🏆 Таблица рекордов</h2>
-        <p class="modal-sub">Локальное хранилище (${this.storage.platformName === 'desktop' ? 'файл ПК' : 'браузер'})</p>
+        <h2 class="modal-title">${t.lbTitle}</h2>
+        <p class="modal-sub">${t.lbStoragePrefix} (${storageText})</p>
         <div class="tabs-row">${tabsHtml}</div>
         ${bodyHtml}
         <div class="btn-row">
-          ${entries.length > 0 ? `<button class="btn btn-danger" id="btn-clear-lb">Очистить</button>` : ''}
-          <button class="btn btn-primary" id="btn-close-lb">Закрыть</button>
+          ${entries.length > 0 ? `<button class="btn btn-danger" id="btn-clear-lb">${t.btnClear}</button>` : ''}
+          <button class="btn btn-primary" id="btn-close-lb">${t.btnClose}</button>
         </div>
       </div>
     `;
@@ -1015,36 +1090,37 @@ export class GameUiExecutor {
     });
   }
 
-  private renderRulesModal(): void {
+  private renderRulesModal(settings: UserSettings): void {
+    const t = I18N_PROFILES[settings.language];
     this.overlayEl.innerHTML = `
       <div class="card wide">
-        <h2 class="modal-title">📖 Правила The Snake 2</h2>
-        <p class="modal-sub">Уровни, бешенство, камни с весом и пополняемые жизни</p>
+        <h2 class="modal-title">${t.rulesTitle}</h2>
+        <p class="modal-sub">${t.rulesSub}</p>
 
         <div class="rules-list">
           <div class="rule-item">
             <span class="rule-icon">🍎</span>
-            <div><strong>Хорошие яблоки:</strong> количество на уровне фиксировано. Соберите все, чтобы пройти уровень! Чем меньше ходов и ошибок — тем выше бонус эффективности.</div>
+            <div><strong>${t.ruleGoodTitle}</strong> ${t.ruleGoodBody}</div>
           </div>
           <div class="rule-item">
             <span class="rule-icon">🔥</span>
-            <div><strong>Змеиное бешенство и похудение:</strong> без хороших яблок змейка кричит «ЕСТЬ!», ускоряется, а затем начинает худеть («Худею!») — если длина дойдёт до нуля, змейка погибнет от голода! Съешьте хорошее яблоко, чтобы успокоить её.</div>
+            <div><strong>${t.ruleFrenzyTitle}</strong> ${t.ruleFrenzyBody}</div>
           </div>
           <div class="rule-item">
             <span class="rule-icon">🪨</span>
-            <div><strong>Камни с весом:</strong> число на камне — его вес. Если длина змейки <em>больше</em> веса (камень светится бирюзовым), его можно толкнуть за бонус, потеряв хвост. Иначе — потеря жизни.</div>
+            <div><strong>${t.ruleStoneTitle}</strong> ${t.ruleStoneBody}</div>
           </div>
           <div class="rule-item">
             <span class="rule-icon">☠️</span>
-            <div><strong>Плохие яблоки:</strong> фиолетовые с крестом — отнимают 1 сегмент длины, штрафуют счёт и добавляют ошибку уровня.</div>
+            <div><strong>${t.ruleBadTitle}</strong> ${t.ruleBadBody}</div>
           </div>
           <div class="rule-item">
             <span class="rule-icon">♥</span>
-            <div><strong>Жизни, пауза и рекорды:</strong> при ошибке вы теряете жизнь и переигрываете уровень. Каждые 1200 очков дают +1 жизнь (до 5). Прогресс сохраняется автоматически — можно продолжить с любого уровня и записать рекорд при выходе в меню.</div>
+            <div><strong>${t.ruleLivesTitle}</strong> ${t.ruleLivesBody}</div>
           </div>
         </div>
 
-        <button class="btn btn-primary" id="btn-close-rules" style="width: 100%;">Понятно</button>
+        <button class="btn btn-primary" id="btn-close-rules" style="width: 100%;">${t.btnGotIt}</button>
       </div>
     `;
 

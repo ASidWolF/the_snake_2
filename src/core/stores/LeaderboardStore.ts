@@ -10,13 +10,16 @@ import { SCORING_PROFILE } from '../profiles/scoringProfile.ts';
 
 const STORAGE_KEY = 'the_snake_2:leaderboard:v1';
 
-export function sanitizePlayerName(raw: string): string {
+export function sanitizePlayerName(
+  raw: string,
+  fallbackName: string = SCORING_PROFILE.defaultPlayerName
+): string {
   const cleaned = raw
     .replace(/[\r\n\t]+/g, ' ')
     .replace(/\s+/g, ' ')
     .trim()
     .slice(0, SCORING_PROFILE.maxPlayerNameLength);
-  return cleaned || SCORING_PROFILE.defaultPlayerName;
+  return cleaned || fallbackName;
 }
 
 function isValidEntry(value: unknown): value is LeaderboardEntry {
@@ -87,6 +90,7 @@ export class LeaderboardStore {
   addRecord(input: {
     readonly runId?: string;
     readonly playerName: string;
+    readonly defaultPlayerName?: string;
     readonly score: number;
     readonly level: number;
     readonly apples: number;
@@ -97,7 +101,10 @@ export class LeaderboardStore {
     const cleanLevel = Math.max(1, Math.floor(input.level));
     const cleanApples = Math.max(0, Math.floor(input.apples));
     const cleanMaxLen = Math.max(1, Math.floor(input.maxLength));
-    const cleanName = sanitizePlayerName(input.playerName);
+    const cleanName = sanitizePlayerName(
+      input.playerName,
+      input.defaultPlayerName
+    );
 
     const existing = input.runId
       ? this.entries.find((e) => e.runId === input.runId)

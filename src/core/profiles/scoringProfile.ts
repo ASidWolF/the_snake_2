@@ -25,6 +25,7 @@ export const SCORING_PROFILE = {
 } as const;
 
 export const DEFAULT_USER_SETTINGS: UserSettings = {
+  language: 'ru',
   difficulty: 'normal',
   audio: {
     masterVolume: 0.75,

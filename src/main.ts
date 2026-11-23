@@ -75,6 +75,7 @@ async function bootstrap(): Promise<void> {
   );
 
   const renderer = new CanvasRenderExecutor(ui.canvasEl);
+  renderer.setLanguage(settingsStore.getSnapshot().language);
 
   // 4. Датчик ввода (клавиатура + свайпы)
   const input = new InputSensor(ui.stageEl, {
@@ -119,6 +120,7 @@ async function bootstrap(): Promise<void> {
 
   settingsStore.subscribe((settings) => {
     audio.applySettings(settings.audio);
+    renderer.setLanguage(settings.language);
     ui.syncAll(runtime.getSnapshot(), settings);
   });
 

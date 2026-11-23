@@ -2,7 +2,7 @@
  * Адресные действия (интерфейсы) — вторая форма контракта архитектуры «чёрные ящики».
  */
 
-import type { AudioSettings, GameEvent, GameSnapshot } from './messages.ts';
+import type { AudioSettings, GameEvent, GameSnapshot, LanguageKey } from './messages.ts';
 
 export type Unsubscribe = () => void;
 
@@ -32,6 +32,7 @@ export interface IAudioExecutor {
 }
 
 export interface IRenderExecutor {
+  setLanguage(language: LanguageKey): void;
   render(snapshot: GameSnapshot, nowSec: number, dtSec: number): void;
   handleEvent(event: GameEvent): void;
   resize(): void;

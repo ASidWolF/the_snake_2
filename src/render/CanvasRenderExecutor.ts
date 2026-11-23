@@ -14,9 +14,11 @@ import type {
   GameEvent,
   GameSnapshot,
   GridPoint,
+  LanguageKey,
 } from '../core/contracts/messages.ts';
 import { DEATH_ANIM_DURATION_SEC } from '../core/processors/SimulationProcessor.ts';
 import { DIRECTION_VECTORS, GRID_PROFILE } from '../core/profiles/gridProfile.ts';
+import { I18N_PROFILES } from '../core/profiles/i18nProfile.ts';
 import { ParticleSystem } from './ParticleSystem.ts';
 
 function lerp(a: number, b: number, t: number): number {
@@ -65,6 +67,7 @@ export class CanvasRenderExecutor implements IRenderExecutor {
   private sickFlashSec = 0;
   private frenzyShoutCooldown = 0;
   private soulSparkCooldown = 0;
+  private language: LanguageKey = 'ru';
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
@@ -74,6 +77,10 @@ export class CanvasRenderExecutor implements IRenderExecutor {
     }
     this.ctx = context;
     this.resize();
+  }
+
+  setLanguage(language: LanguageKey): void {
+    this.language = language;
   }
 
   resize(): void {
@@ -107,6 +114,7 @@ export class CanvasRenderExecutor implements IRenderExecutor {
   }
 
   handleEvent(event: GameEvent): void {
+    const t = I18N_PROFILES[this.language];
     switch (event.type) {
       case 'LEVEL_STARTED':
         this.particles.clear();
@@ -126,7 +134,7 @@ export class CanvasRenderExecutor implements IRenderExecutor {
           event.combo > 2 ? '#fde047' : '#6ee7b7',
           event.combo > 2 ? 1.15 : 1
         );
-        this.particles.showSpeech('Ням!', 'yum', 0.9, event.pos.x, event.pos.y);
+        this.particles.showSpeech(t.speechYum, 'yum', 0.9, event.pos.x, event.pos.y);
         if (event.calmedFrenzy) {
           this.particles.spawnShockwave(event.pos.x, event.pos.y, '#38bdf8', 3.4);
         }
@@ -139,11 +147,11 @@ export class CanvasRenderExecutor implements IRenderExecutor {
         this.particles.spawnText(
           event.pos.x,
           event.pos.y,
-          event.penalty > 0 ? `-${event.penalty}` : '-1 ДЛИНА',
+          event.penalty > 0 ? `-${event.penalty}` : t.floatMinusLength,
           '#f472b6',
           1.05
         );
-        this.particles.showSpeech('Фу!', 'ew', 1.0, event.pos.x, event.pos.y);
+        this.particles.showSpeech(t.speechEw, 'ew', 1.0, event.pos.x, event.pos.y);
         this.particles.addShake(0.45);
         break;
       case 'STONE_PUSHED':
@@ -160,26 +168,26 @@ export class CanvasRenderExecutor implements IRenderExecutor {
         this.particles.addShake(0.5);
         break;
       case 'FRENZY_STARTED':
-        this.particles.showSpeech('ЕСТЬ!', 'eat', 1.15);
+        this.particles.showSpeech(t.speechEat, 'eat', 1.15);
         this.frenzyShoutCooldown = 2.3;
         this.particles.addShake(0.25);
         break;
       case 'FRENZY_PEAK':
-        this.particles.showSpeech('ЕСТЬ!!', 'eat', 1.2);
+        this.particles.showSpeech(t.speechEatPeak, 'eat', 1.2);
         this.frenzyShoutCooldown = 2.0;
         this.particles.addShake(0.6);
         break;
       case 'SNAKE_SHRUNK':
         this.particles.spawnBurst(event.tailLost.x, event.tailLost.y, '#fed7aa', 12, 3.6, true);
         this.particles.spawnShockwave(event.tailLost.x, event.tailLost.y, '#fb923c', 1.6);
-        this.particles.showSpeech('Худею!', 'thin', 1.1, event.head.x, event.head.y);
+        this.particles.showSpeech(t.speechShrinking, 'thin', 1.1, event.head.x, event.head.y);
         this.frenzyShoutCooldown = 1.6;
         this.particles.addShake(0.3);
         break;
       case 'LIFE_GAINED':
         this.particles.spawnBurst(event.pos.x, event.pos.y, '#fde047', 22, 6.5, true);
         this.particles.spawnShockwave(event.pos.x, event.pos.y, '#fde047', 3.6);
-        this.particles.spawnText(event.pos.x, event.pos.y, '+1 ЖИЗНЬ!', '#fde047', 1.3);
+        this.particles.spawnText(event.pos.x, event.pos.y, t.floatExtraLife, '#fde047', 1.3);
         break;
       case 'LIFE_LOST':
         this.sickFlashSec = 0;
@@ -232,8 +240,9 @@ export class CanvasRenderExecutor implements IRenderExecutor {
       this.frenzyShoutCooldown -= safeDt;
       if (this.frenzyShoutCooldown <= 0 && !this.particles.hasActiveSpeech()) {
         const head = snapshot.snake.segments[0];
+        const t = I18N_PROFILES[this.language];
         this.particles.showSpeech(
-          snapshot.frenzy.level > 0.8 ? 'ЕСТЬ!!' : 'ЕСТЬ!',
+          snapshot.frenzy.level > 0.8 ? t.speechEatPeak : t.speechEat,
           'eat',
           1.0,
           head?.x,
