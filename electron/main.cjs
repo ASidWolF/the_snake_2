@@ -85,3 +85,12 @@ app.on('window-all-closed', () => {
     app.quit();
   }
 });
+
+// Корректный выход при остановке из консоли по Ctrl+C (SIGINT) или SIGTERM
+process.on('SIGINT', () => {
+  app.quit();
+});
+
+process.on('SIGTERM', () => {
+  app.quit();
+});

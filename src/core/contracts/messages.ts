@@ -81,6 +81,7 @@ export interface LevelSummary {
 }
 
 export interface GameSnapshot {
+  readonly runId: string;
   readonly phase: GamePhase;
   readonly difficulty: DifficultyKey;
   readonly score: number;
@@ -92,6 +93,7 @@ export interface GameSnapshot {
   readonly effectiveSpeed: number;
   readonly moveProgress: number; // 0..1 для плавной интерполяции
   readonly stepAccumulator: number;
+  readonly resumeCountdownSec: number; // короткая пауза-отсчёт при возврате в сохранённую партию
   readonly snake: SnakeState;
   readonly goodApples: readonly GoodApple[];
   readonly badApples: readonly BadApple[];
@@ -125,6 +127,7 @@ export interface UserSettings {
 
 export interface LeaderboardEntry {
   readonly id: string;
+  readonly runId?: string;
   readonly playerName: string;
   readonly score: number;
   readonly level: number;
@@ -137,6 +140,7 @@ export interface LeaderboardEntry {
 /** Входные команды от датчиков (клавиатура, тач, UI) */
 export type GameCommand =
   | { readonly type: 'START_NEW_RUN'; readonly difficulty: DifficultyKey; readonly seed?: number }
+  | { readonly type: 'RESUME_SAVED_RUN'; readonly savedSnapshot: GameSnapshot }
   | { readonly type: 'CHANGE_DIRECTION'; readonly direction: Direction }
   | { readonly type: 'TOGGLE_PAUSE' }
   | { readonly type: 'SET_PAUSED'; readonly paused: boolean }
@@ -147,6 +151,7 @@ export type GameCommand =
 /** Исходящие доменные события (публикуются через EventBus исполнителям) */
 export type GameEvent =
   | { readonly type: 'RUN_STARTED'; readonly difficulty: DifficultyKey; readonly level: number }
+  | { readonly type: 'RUN_RESUMED'; readonly difficulty: DifficultyKey; readonly level: number }
   | { readonly type: 'LEVEL_STARTED'; readonly level: number; readonly retry: boolean }
   | { readonly type: 'SNAKE_STEPPED'; readonly head: GridPoint; readonly wrapped: boolean }
   | {

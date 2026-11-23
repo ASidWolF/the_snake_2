@@ -1,7 +1,7 @@
 /**
  * Точка сборки приложения (Composition Root).
  * Соединяет чёрные ящики по контрактам:
- * InputSensor / UI -> GameRuntime -> EventBus / GameStore -> CanvasRenderExecutor + WebAudioExecutor + GameUiExecutor.
+ * InputSensor / UI -> GameRuntime -> EventBus / GameStore -> CanvasRenderExecutor + WebAudioExecutor + GameUiExecutor + SavedRunStore.
  */
 
 import './styles/main.css';
@@ -9,6 +9,7 @@ import { WebAudioExecutor } from './audio/WebAudioExecutor.ts';
 import { EventBus } from './core/bus/EventBus.ts';
 import { GameRuntime } from './core/GameRuntime.ts';
 import { LeaderboardStore } from './core/stores/LeaderboardStore.ts';
+import { SavedRunStore, isResumableSnapshot } from './core/stores/SavedRunStore.ts';
 import { SettingsStore } from './core/stores/SettingsStore.ts';
 import { InputSensor } from './input/InputSensor.ts';
 import { createStorageAdapter } from './platform/storageAdapter.ts';
@@ -21,12 +22,17 @@ async function bootstrap(): Promise<void> {
     throw new Error('Контейнер #app не найден');
   }
 
-  // 1. Платформенный адаптер и хранилища настроек/рекордов
+  // 1. Платформенный адаптер и хранилища настроек/рекордов/сохранённой партии
   const storage = createStorageAdapter();
   const settingsStore = new SettingsStore(storage);
   const leaderboardStore = new LeaderboardStore(storage);
+  const savedRunStore = new SavedRunStore(storage);
 
-  await Promise.all([settingsStore.load(), leaderboardStore.load()]);
+  await Promise.all([
+    settingsStore.load(),
+    leaderboardStore.load(),
+    savedRunStore.load(),
+  ]);
 
   // 2. Коммутатор и чистое игровое ядро
   const bus = new EventBus();
@@ -40,11 +46,19 @@ async function bootstrap(): Promise<void> {
   const audio = new WebAudioExecutor();
   audio.applySettings(settingsStore.getSnapshot().audio);
 
+  const persistActiveRun = () => {
+    const snap = runtime.getSnapshot();
+    if (isResumableSnapshot(snap)) {
+      savedRunStore.save(snap);
+    }
+  };
+
   const ui = new GameUiExecutor(
     root,
     runtime.getSnapshot(),
     settingsStore,
     leaderboardStore,
+    savedRunStore,
     storage,
     {
       onCommand: (cmd) => {
@@ -56,6 +70,7 @@ async function bootstrap(): Promise<void> {
       onUserGesture: () => {
         audio.unlock();
       },
+      onSaveCurrentRun: persistActiveRun,
     }
   );
 
@@ -79,6 +94,22 @@ async function bootstrap(): Promise<void> {
   bus.subscribeAll((event) => {
     renderer.handleEvent(event);
     audio.handleEvent(event);
+
+    if (event.type === 'GAME_OVER') {
+      savedRunStore.clear();
+    } else if (
+      event.type === 'RUN_STARTED' ||
+      event.type === 'LEVEL_STARTED' ||
+      event.type === 'GOOD_APPLE_EATEN' ||
+      event.type === 'BAD_APPLE_EATEN' ||
+      event.type === 'STONE_PUSHED' ||
+      event.type === 'LEVEL_COMPLETED' ||
+      event.type === 'LIFE_LOST'
+    ) {
+      persistActiveRun();
+    } else if (event.type === 'PHASE_CHANGED' && event.to === 'paused') {
+      persistActiveRun();
+    }
   });
 
   runtime.store.subscribe((snapshot) => {
@@ -95,7 +126,11 @@ async function bootstrap(): Promise<void> {
     ui.forceOverlayRender();
   });
 
-  // 6. Адаптивный ресайз и автопауза при сворачивании вкладки
+  savedRunStore.subscribe(() => {
+    ui.forceOverlayRender();
+  });
+
+  // 6. Адаптивный ресайз и автопауза + автосохранение при сворачивании вкладки
   const onResize = () => renderer.resize();
   window.addEventListener('resize', onResize);
   const resizeObserver = new ResizeObserver(() => renderer.resize());
@@ -104,6 +139,7 @@ async function bootstrap(): Promise<void> {
   document.addEventListener('visibilitychange', () => {
     if (document.hidden && runtime.getSnapshot().phase === 'playing') {
       runtime.dispatch({ type: 'SET_PAUSED', paused: true });
+      persistActiveRun();
     }
   });
 
@@ -119,8 +155,9 @@ async function bootstrap(): Promise<void> {
   };
   window.requestAnimationFrame(frame);
 
-  // Корректная очистка при HMR / выгрузке
+  // Корректная очистка и автосохранение при закрытии окна/вкладки
   window.addEventListener('beforeunload', () => {
+    persistActiveRun();
     input.dispose();
     renderer.dispose();
     audio.dispose();

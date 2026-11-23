@@ -81,6 +81,7 @@ function findFreeCell(
 
 function buildLevelSnapshot(
   base: {
+    runId: string;
     difficulty: DifficultyKey;
     level: number;
     score: number;
@@ -100,6 +101,7 @@ function buildLevelSnapshot(
   const baseSpeed = computeBaseSpeed(base.level, profile);
 
   return {
+    runId: base.runId,
     phase: base.phase,
     difficulty: base.difficulty,
     score: base.score,
@@ -111,6 +113,7 @@ function buildLevelSnapshot(
     effectiveSpeed: baseSpeed,
     moveProgress: 0,
     stepAccumulator: 0,
+    resumeCountdownSec: 0,
     snake: generated.snake,
     goodApples: generated.goodApples,
     badApples: generated.badApples,
@@ -133,6 +136,7 @@ export function createInitialSnapshot(
 ): GameSnapshot {
   return buildLevelSnapshot(
     {
+      runId: `menu-${seed}`,
       difficulty,
       level: 1,
       score: 0,
@@ -186,8 +190,10 @@ export function applyCommand(
   switch (command.type) {
     case 'START_NEW_RUN': {
       const seed = command.seed ?? deriveNextSeed(state.levelSeed, 7);
+      const runId = `run-${command.difficulty}-${seed}`;
       const next = buildLevelSnapshot(
         {
+          runId,
           difficulty: command.difficulty,
           level: 1,
           score: 0,
@@ -208,6 +214,38 @@ export function applyCommand(
           { type: 'PHASE_CHANGED', from: state.phase, to: 'playing' },
           { type: 'RUN_STARTED', difficulty: command.difficulty, level: 1 },
           { type: 'LEVEL_STARTED', level: 1, retry: false },
+        ],
+      };
+    }
+
+    case 'RESUME_SAVED_RUN': {
+      const saved = command.savedSnapshot;
+      if (saved.lives <= 0 || saved.snake.segments.length === 0) {
+        return { state, events: [] };
+      }
+      const restoringToPlay = saved.phase === 'playing' || saved.phase === 'paused';
+      const targetPhase = restoringToPlay ? 'playing' : saved.phase;
+      const next: GameSnapshot = {
+        ...saved,
+        phase: targetPhase,
+        moveProgress: 0,
+        stepAccumulator: 0,
+        resumeCountdownSec: restoringToPlay ? 1.2 : 0,
+        snake: {
+          ...saved.snake,
+          previousSegments: saved.snake.segments.map((s) => ({ ...s })),
+          directionQueue: [],
+        },
+      };
+      return {
+        state: next,
+        events: [
+          { type: 'PHASE_CHANGED', from: state.phase, to: targetPhase },
+          {
+            type: 'RUN_RESUMED',
+            difficulty: next.difficulty,
+            level: next.levelStats.level,
+          },
         ],
       };
     }
@@ -254,6 +292,7 @@ export function applyCommand(
       const seed = command.seed ?? deriveNextSeed(state.levelSeed, 19);
       const next = buildLevelSnapshot(
         {
+          runId: state.runId,
           difficulty: state.difficulty,
           level: state.levelStats.level,
           score: state.score,
@@ -285,6 +324,7 @@ export function applyCommand(
       const seed = command.seed ?? deriveNextSeed(state.levelSeed, nextLevel * 13);
       const next = buildLevelSnapshot(
         {
+          runId: state.runId,
           difficulty: state.difficulty,
           level: nextLevel,
           score: state.score,
@@ -645,6 +685,19 @@ export function advanceSimulation(
   }
 
   const safeDt = Math.min(0.1, dtSec);
+
+  // Короткий безопасный отсчёт при возврате из сохранённой партии
+  if (state.resumeCountdownSec > 0) {
+    return {
+      state: {
+        ...state,
+        resumeCountdownSec: Math.max(0, state.resumeCountdownSec - safeDt),
+        moveProgress: 0,
+      },
+      events: [],
+    };
+  }
+
   const profile = DIFFICULTY_PROFILES[state.difficulty];
   const events: GameEvent[] = [];
 

@@ -78,7 +78,14 @@ export class LeaderboardStore {
     return list[0]?.score ?? 0;
   }
 
+  hasSavedScore(runId: string, score: number): boolean {
+    if (!runId) return false;
+    const existing = this.entries.find((e) => e.runId === runId);
+    return existing ? existing.score >= Math.round(score) : false;
+  }
+
   addRecord(input: {
+    readonly runId?: string;
     readonly playerName: string;
     readonly score: number;
     readonly level: number;
@@ -86,18 +93,42 @@ export class LeaderboardStore {
     readonly maxLength: number;
     readonly difficulty: DifficultyKey;
   }): { readonly entry: LeaderboardEntry; readonly rank: number } {
-    const entry: LeaderboardEntry = {
-      id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-      playerName: sanitizePlayerName(input.playerName),
-      score: Math.max(0, Math.round(input.score)),
-      level: Math.max(1, Math.floor(input.level)),
-      apples: Math.max(0, Math.floor(input.apples)),
-      maxLength: Math.max(1, Math.floor(input.maxLength)),
-      difficulty: input.difficulty,
-      createdAt: new Date().toISOString(),
-    };
+    const cleanScore = Math.max(0, Math.round(input.score));
+    const cleanLevel = Math.max(1, Math.floor(input.level));
+    const cleanApples = Math.max(0, Math.floor(input.apples));
+    const cleanMaxLen = Math.max(1, Math.floor(input.maxLength));
+    const cleanName = sanitizePlayerName(input.playerName);
 
-    this.entries = sortEntries([...this.entries, entry]);
+    const existing = input.runId
+      ? this.entries.find((e) => e.runId === input.runId)
+      : undefined;
+
+    const entry: LeaderboardEntry = existing
+      ? {
+          ...existing,
+          playerName: cleanName,
+          score: Math.max(existing.score, cleanScore),
+          level: Math.max(existing.level, cleanLevel),
+          apples: Math.max(existing.apples, cleanApples),
+          maxLength: Math.max(existing.maxLength, cleanMaxLen),
+          createdAt: new Date().toISOString(),
+        }
+      : {
+          id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+          runId: input.runId,
+          playerName: cleanName,
+          score: cleanScore,
+          level: cleanLevel,
+          apples: cleanApples,
+          maxLength: cleanMaxLen,
+          difficulty: input.difficulty,
+          createdAt: new Date().toISOString(),
+        };
+
+    const rest = existing
+      ? this.entries.filter((e) => e.id !== existing.id)
+      : this.entries;
+    this.entries = sortEntries([...rest, entry]);
     const rank = this.entries.findIndex((e) => e.id === entry.id) + 1;
     this.notify();
     void this.storage.setItem(STORAGE_KEY, this.entries);

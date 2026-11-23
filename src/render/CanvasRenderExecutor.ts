@@ -239,6 +239,43 @@ export class CanvasRenderExecutor implements IRenderExecutor {
     if (snapshot.frenzy.level > 0.05) {
       this.drawFrenzyVignette(ctx, bx, by, boardW, boardH, snapshot.frenzy.level, nowSec);
     }
+
+    if (snapshot.phase === 'playing' && snapshot.resumeCountdownSec > 0) {
+      this.drawResumeCountdown(ctx, bx, by, boardW, boardH, snapshot.resumeCountdownSec);
+    }
+  }
+
+  private drawResumeCountdown(
+    ctx: CanvasRenderingContext2D,
+    bx: number,
+    by: number,
+    bw: number,
+    bh: number,
+    remainingSec: number
+  ): void {
+    const cx = bx + bw * 0.5;
+    const cy = by + bh * 0.5;
+    const step = Math.max(1, Math.min(3, Math.ceil((remainingSec / 1.2) * 3)));
+    const r = Math.max(36, this.cellSize * 1.45);
+
+    ctx.save();
+    ctx.fillStyle = 'rgba(7, 14, 22, 0.72)';
+    ctx.strokeStyle = 'rgba(52, 211, 153, 0.85)';
+    ctx.lineWidth = 3;
+    ctx.shadowColor = 'rgba(16, 185, 129, 0.55)';
+    ctx.shadowBlur = 22;
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = '#ecfdf5';
+    ctx.font = `900 ${Math.round(r * 0.95)}px system-ui, -apple-system, sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(String(step), cx, cy + 2);
+    ctx.restore();
   }
 
   private drawBoard(

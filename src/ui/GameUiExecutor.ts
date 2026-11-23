@@ -1,6 +1,6 @@
 /**
  * Роль: Исполнитель UI + Датчик кнопок интерфейса.
- * Отображает состояние из GameStore, SettingsStore и LeaderboardStore.
+ * Отображает состояние из GameStore, SettingsStore, LeaderboardStore и SavedRunStore.
  * Не хранит авторитетного игрового состояния и не содержит игровой логики:
  * все действия отправляются через GameCommand и методы хранилищ.
  */
@@ -20,14 +20,22 @@ import {
   DIFFICULTY_PROFILES,
 } from '../core/profiles/difficultyProfiles.ts';
 import type { LeaderboardStore } from '../core/stores/LeaderboardStore.ts';
+import type { SavedRunStore } from '../core/stores/SavedRunStore.ts';
 import type { SettingsStore } from '../core/stores/SettingsStore.ts';
 
-type ModalKind = 'none' | 'settings' | 'leaderboard' | 'rules';
+type ModalKind =
+  | 'none'
+  | 'settings'
+  | 'leaderboard'
+  | 'rules'
+  | 'save_record'
+  | 'exit_confirm';
 
 export interface GameUiCallbacks {
   readonly onCommand: (command: GameCommand) => void;
   readonly onUiClick: () => void;
   readonly onUserGesture: () => void;
+  readonly onSaveCurrentRun: () => void;
 }
 
 const DEATH_REASON_TEXT: Readonly<Record<DeathReason, string>> = {
@@ -75,6 +83,7 @@ export class GameUiExecutor {
 
   private readonly settingsStore: SettingsStore;
   private readonly leaderboardStore: LeaderboardStore;
+  private readonly savedRunStore: SavedRunStore;
   private readonly storage: IStorageAdapter;
   private readonly callbacks: GameUiCallbacks;
 
@@ -89,12 +98,14 @@ export class GameUiExecutor {
     initialSnapshot: GameSnapshot,
     settingsStore: SettingsStore,
     leaderboardStore: LeaderboardStore,
+    savedRunStore: SavedRunStore,
     storage: IStorageAdapter,
     callbacks: GameUiCallbacks
   ) {
     this.lastSnapshot = initialSnapshot;
     this.settingsStore = settingsStore;
     this.leaderboardStore = leaderboardStore;
+    this.savedRunStore = savedRunStore;
     this.storage = storage;
     this.callbacks = callbacks;
 
@@ -212,16 +223,33 @@ export class GameUiExecutor {
 
   syncAll(snapshot: GameSnapshot, settings: UserSettings): void {
     const prevPhase = this.lastSnapshot.phase;
+    const prevRunId = this.lastSnapshot.runId;
     this.lastSnapshot = snapshot;
 
-    if (prevPhase !== 'game_over' && snapshot.phase === 'game_over') {
+    if (prevRunId !== snapshot.runId || (prevPhase !== 'game_over' && snapshot.phase === 'game_over')) {
       this.savedRecordRank = null;
     }
 
     this.updateHud(snapshot, settings);
     this.updateTouchDpadVisibility(snapshot, settings.touchControls);
 
-    const key = `${snapshot.phase}|${this.activeModal}|${settings.difficulty}|${this.leaderboardFilter}|${this.savedRecordRank ?? ''}|${snapshot.levelStats.level}|${snapshot.lives}`;
+    const savedRun = this.savedRunStore.getSnapshot();
+    const savedKey = savedRun
+      ? `${savedRun.runId}:${savedRun.levelStats.level}:${savedRun.score}:${savedRun.phase}`
+      : 'none';
+
+    const key = [
+      snapshot.phase,
+      this.activeModal,
+      settings.difficulty,
+      this.leaderboardFilter,
+      this.savedRecordRank ?? '',
+      snapshot.levelStats.level,
+      snapshot.lives,
+      snapshot.score,
+      savedKey,
+    ].join('|');
+
     if (key !== this.renderedOverlayKey) {
       this.renderedOverlayKey = key;
       this.renderOverlay(snapshot, settings);
@@ -231,6 +259,40 @@ export class GameUiExecutor {
   forceOverlayRender(): void {
     this.renderedOverlayKey = '';
     this.syncAll(this.lastSnapshot, this.settingsStore.getSnapshot());
+  }
+
+  private requestReturnToMenu(snapshot: GameSnapshot): void {
+    this.callbacks.onUiClick();
+    // Всегда сохраняем текущий прогресс партии, чтобы работала кнопка «Продолжить»
+    this.callbacks.onSaveCurrentRun();
+
+    const needsRecordPrompt =
+      snapshot.score > 0 &&
+      !this.leaderboardStore.hasSavedScore(snapshot.runId, snapshot.score);
+
+    if (needsRecordPrompt) {
+      this.activeModal = 'exit_confirm';
+      this.forceOverlayRender();
+      return;
+    }
+
+    this.activeModal = 'none';
+    this.callbacks.onCommand({ type: 'RETURN_TO_MENU' });
+  }
+
+  private saveRecordForSnapshot(snapshot: GameSnapshot, rawName: string): number {
+    const { entry, rank } = this.leaderboardStore.addRecord({
+      runId: snapshot.runId,
+      playerName: rawName,
+      score: snapshot.score,
+      level: snapshot.highestLevel,
+      apples: snapshot.totalApplesEaten,
+      maxLength: snapshot.maxLength,
+      difficulty: snapshot.difficulty,
+    });
+    this.settingsStore.update({ lastPlayerName: entry.playerName });
+    this.savedRecordRank = rank;
+    return rank;
   }
 
   private updateHud(snapshot: GameSnapshot, settings: UserSettings): void {
@@ -289,8 +351,12 @@ export class GameUiExecutor {
         this.renderSettingsModal(settings);
       } else if (this.activeModal === 'leaderboard') {
         this.renderLeaderboardModal();
-      } else {
+      } else if (this.activeModal === 'rules') {
         this.renderRulesModal();
+      } else if (this.activeModal === 'save_record') {
+        this.renderSaveRecordModal(snapshot, settings, false);
+      } else {
+        this.renderSaveRecordModal(snapshot, settings, true);
       }
       return;
     }
@@ -326,6 +392,7 @@ export class GameUiExecutor {
     const modeLabel =
       this.storage.platformName === 'desktop' ? 'ПК-приложение' : 'Веб-версия';
     const bestScore = this.leaderboardStore.getBestScore(settings.difficulty);
+    const savedRun = this.savedRunStore.getSnapshot();
 
     const diffCards = DIFFICULTY_ORDER.map((key) => {
       const p = DIFFICULTY_PROFILES[key];
@@ -340,6 +407,15 @@ export class GameUiExecutor {
         </button>
       `;
     }).join('');
+
+    const continueBtn = savedRun
+      ? `
+        <button class="btn btn-continue" id="btn-continue">
+          <span>▶ Продолжить игру</span>
+          <span class="btn-meta">Уровень ${savedRun.levelStats.level} • Очки: ${savedRun.score} • ${DIFFICULTY_PROFILES[savedRun.difficulty].label} • ${'♥'.repeat(savedRun.lives)}</span>
+        </button>
+      `
+      : '';
 
     const quitBtn = this.storage.quitApp
       ? `<button class="btn btn-ghost" id="btn-quit">Выход</button>`
@@ -356,11 +432,12 @@ export class GameUiExecutor {
           </p>
         </div>
 
-        <div class="section-label">Уровень сложности</div>
+        <div class="section-label">Уровень сложности (для новой игры)</div>
         <div class="difficulty-grid">${diffCards}</div>
 
         <div class="btn-stack">
-          <button class="btn btn-primary" id="btn-play">▶ Начать игру</button>
+          ${continueBtn}
+          <button class="btn btn-primary" id="btn-play">${savedRun ? '✨ Новая игра (с 1 уровня)' : '▶ Начать игру'}</button>
           <div class="btn-row">
             <button class="btn" id="btn-leaderboard">🏆 Рекорды</button>
             <button class="btn" id="btn-settings">⚙️ Настройки</button>
@@ -381,6 +458,17 @@ export class GameUiExecutor {
         this.callbacks.onUiClick();
         const key = btn.dataset.difficulty as DifficultyKey;
         this.settingsStore.update({ difficulty: key });
+      });
+    });
+
+    this.overlayEl.querySelector('#btn-continue')?.addEventListener('click', () => {
+      const latestSaved = this.savedRunStore.getSnapshot();
+      if (!latestSaved) return;
+      this.callbacks.onUserGesture();
+      this.callbacks.onUiClick();
+      this.callbacks.onCommand({
+        type: 'RESUME_SAVED_RUN',
+        savedSnapshot: latestSaved,
       });
     });
 
@@ -420,6 +508,18 @@ export class GameUiExecutor {
     });
   }
 
+  private renderSaveRecordActionButton(snapshot: GameSnapshot): string {
+    if (snapshot.score <= 0) return '';
+    const alreadySaved = this.leaderboardStore.hasSavedScore(
+      snapshot.runId,
+      snapshot.score
+    );
+    const label = alreadySaved
+      ? `✓ Рекорд записан (${snapshot.score})`
+      : `🏆 Сохранить рекорд (${snapshot.score})`;
+    return `<button class="btn btn-gold" id="btn-mid-save-record">${label}</button>`;
+  }
+
   private renderPauseOverlay(snapshot: GameSnapshot): void {
     const diff = DIFFICULTY_PROFILES[snapshot.difficulty];
     this.overlayEl.innerHTML = `
@@ -432,8 +532,9 @@ export class GameUiExecutor {
         </div>
         <div class="btn-stack">
           <button class="btn btn-primary" id="btn-resume">▶ Продолжить</button>
+          ${this.renderSaveRecordActionButton(snapshot)}
           <button class="btn" id="btn-pause-settings">⚙️ Громкость и управление</button>
-          <button class="btn btn-ghost" id="btn-pause-menu">В главное меню</button>
+          <button class="btn btn-ghost" id="btn-pause-menu">⬅ В главное меню (прогресс сохранится)</button>
         </div>
       </div>
     `;
@@ -444,6 +545,12 @@ export class GameUiExecutor {
       this.callbacks.onCommand({ type: 'SET_PAUSED', paused: false });
     });
 
+    this.overlayEl.querySelector('#btn-mid-save-record')?.addEventListener('click', () => {
+      this.callbacks.onUiClick();
+      this.activeModal = 'save_record';
+      this.forceOverlayRender();
+    });
+
     this.overlayEl.querySelector('#btn-pause-settings')!.addEventListener('click', () => {
       this.callbacks.onUiClick();
       this.activeModal = 'settings';
@@ -451,8 +558,7 @@ export class GameUiExecutor {
     });
 
     this.overlayEl.querySelector('#btn-pause-menu')!.addEventListener('click', () => {
-      this.callbacks.onUiClick();
-      this.callbacks.onCommand({ type: 'RETURN_TO_MENU' });
+      this.requestReturnToMenu(snapshot);
     });
   }
 
@@ -471,7 +577,8 @@ export class GameUiExecutor {
         </div>
         <div class="btn-stack">
           <button class="btn btn-primary" id="btn-retry">↻ Повторить уровень ${snapshot.levelStats.level}</button>
-          <button class="btn btn-ghost" id="btn-lost-menu">В главное меню</button>
+          ${this.renderSaveRecordActionButton(snapshot)}
+          <button class="btn btn-ghost" id="btn-lost-menu">⬅ В главное меню (прогресс сохранится)</button>
         </div>
       </div>
     `;
@@ -485,9 +592,14 @@ export class GameUiExecutor {
       });
     });
 
-    this.overlayEl.querySelector('#btn-lost-menu')!.addEventListener('click', () => {
+    this.overlayEl.querySelector('#btn-mid-save-record')?.addEventListener('click', () => {
       this.callbacks.onUiClick();
-      this.callbacks.onCommand({ type: 'RETURN_TO_MENU' });
+      this.activeModal = 'save_record';
+      this.forceOverlayRender();
+    });
+
+    this.overlayEl.querySelector('#btn-lost-menu')!.addEventListener('click', () => {
+      this.requestReturnToMenu(snapshot);
     });
   }
 
@@ -513,7 +625,8 @@ export class GameUiExecutor {
 
         <div class="btn-stack">
           <button class="btn btn-primary" id="btn-next-level">➡ Уровень ${snapshot.levelStats.level + 1}</button>
-          <button class="btn btn-ghost" id="btn-clear-menu">В главное меню</button>
+          ${this.renderSaveRecordActionButton(snapshot)}
+          <button class="btn btn-ghost" id="btn-clear-menu">⬅ В главное меню (прогресс сохранится)</button>
         </div>
       </div>
     `;
@@ -527,9 +640,100 @@ export class GameUiExecutor {
       });
     });
 
-    this.overlayEl.querySelector('#btn-clear-menu')!.addEventListener('click', () => {
+    this.overlayEl.querySelector('#btn-mid-save-record')?.addEventListener('click', () => {
       this.callbacks.onUiClick();
+      this.activeModal = 'save_record';
+      this.forceOverlayRender();
+    });
+
+    this.overlayEl.querySelector('#btn-clear-menu')!.addEventListener('click', () => {
+      this.requestReturnToMenu(snapshot);
+    });
+  }
+
+  private renderSaveRecordModal(
+    snapshot: GameSnapshot,
+    settings: UserSettings,
+    exitAfter: boolean
+  ): void {
+    const diff = DIFFICULTY_PROFILES[snapshot.difficulty];
+    const title = exitAfter ? 'Выход в главное меню' : 'Сохранить рекорд';
+    const sub = exitAfter
+      ? `Прогресс (Ур. ${snapshot.levelStats.level}) сохранён — вы сможете нажать «Продолжить». Хотите также записать текущий счёт в таблицу рекордов?`
+      : `Уровень ${snapshot.levelStats.level} • ${diff.label}. При продолжении партии рекорд автоматически обновится без дубликатов.`;
+
+    const alreadySaved = this.leaderboardStore.hasSavedScore(
+      snapshot.runId,
+      snapshot.score
+    );
+
+    this.overlayEl.innerHTML = `
+      <div class="card">
+        <h2 class="modal-title">🏆 ${title}</h2>
+        <p class="modal-sub">${sub}</p>
+
+        <div class="stats-grid">
+          <div class="stat-box"><span class="k">Текущий счёт</span><span class="v gold">${snapshot.score}</span></div>
+          <div class="stat-box"><span class="k">Достигнут уровень</span><span class="v emerald">${snapshot.highestLevel}</span></div>
+        </div>
+
+        ${
+          alreadySaved && this.savedRecordRank !== null && !exitAfter
+            ? `<div class="saved-banner">Рекорд сохранён! Текущее место: #${this.savedRecordRank}</div>`
+            : `
+              <form class="record-form" id="mid-record-form">
+                <input
+                  class="text-input"
+                  id="mid-player-name-input"
+                  type="text"
+                  maxlength="18"
+                  placeholder="Ваше имя для таблицы рекордов"
+                  value="${escapeHtml(settings.lastPlayerName)}"
+                />
+                <button class="btn btn-primary" type="submit" style="padding: 10px 16px; font-size: 14px;">
+                  ${exitAfter ? 'Сохранить и выйти' : 'Сохранить'}
+                </button>
+              </form>
+            `
+        }
+
+        <div class="btn-stack">
+          ${
+            exitAfter
+              ? `<button class="btn" id="btn-exit-without-record">💾 Выйти без записи рекорда (прогресс сохранён)</button>`
+              : ''
+          }
+          <button class="btn btn-ghost" id="btn-cancel-save-record">${exitAfter ? 'Отмена' : 'Назад'}</button>
+        </div>
+      </div>
+    `;
+
+    const form = this.overlayEl.querySelector<HTMLFormElement>('#mid-record-form');
+    form?.addEventListener('submit', (e) => {
+      e.preventDefault();
+      this.callbacks.onUiClick();
+      const input = this.overlayEl.querySelector<HTMLInputElement>('#mid-player-name-input');
+      this.saveRecordForSnapshot(snapshot, input?.value ?? '');
+      if (exitAfter) {
+        this.callbacks.onSaveCurrentRun();
+        this.activeModal = 'none';
+        this.callbacks.onCommand({ type: 'RETURN_TO_MENU' });
+      } else {
+        this.forceOverlayRender();
+      }
+    });
+
+    this.overlayEl.querySelector('#btn-exit-without-record')?.addEventListener('click', () => {
+      this.callbacks.onUiClick();
+      this.callbacks.onSaveCurrentRun();
+      this.activeModal = 'none';
       this.callbacks.onCommand({ type: 'RETURN_TO_MENU' });
+    });
+
+    this.overlayEl.querySelector('#btn-cancel-save-record')!.addEventListener('click', () => {
+      this.callbacks.onUiClick();
+      this.activeModal = 'none';
+      this.forceOverlayRender();
     });
   }
 
@@ -539,10 +743,15 @@ export class GameUiExecutor {
       ? DEATH_REASON_TEXT[snapshot.lastDeathReason]
       : 'Жизни закончились.';
 
+    const alreadySaved = this.leaderboardStore.hasSavedScore(
+      snapshot.runId,
+      snapshot.score
+    );
+
     const recordBlock =
       snapshot.score <= 0
         ? ''
-        : this.savedRecordRank !== null
+        : alreadySaved && this.savedRecordRank !== null
           ? `<div class="saved-banner">Рекорд сохранён! Место в таблице: #${this.savedRecordRank}</div>`
           : `
             <form class="record-form" id="record-form">
@@ -587,17 +796,7 @@ export class GameUiExecutor {
       e.preventDefault();
       this.callbacks.onUiClick();
       const input = this.overlayEl.querySelector<HTMLInputElement>('#player-name-input');
-      const rawName = input?.value ?? '';
-      const { entry, rank } = this.leaderboardStore.addRecord({
-        playerName: rawName,
-        score: snapshot.score,
-        level: snapshot.highestLevel,
-        apples: snapshot.totalApplesEaten,
-        maxLength: snapshot.maxLength,
-        difficulty: snapshot.difficulty,
-      });
-      this.settingsStore.update({ lastPlayerName: entry.playerName });
-      this.savedRecordRank = rank;
+      this.saveRecordForSnapshot(snapshot, input?.value ?? '');
       this.forceOverlayRender();
     });
 
@@ -831,7 +1030,7 @@ export class GameUiExecutor {
           </div>
           <div class="rule-item">
             <span class="rule-icon">♥</span>
-            <div><strong>Жизни и 1-UP:</strong> при ошибке вы теряете жизнь и переигрываете текущий уровень с начала. Каждые 1200 очков приносят дополнительную жизнь (до 5). Стены телепортируют!</div>
+            <div><strong>Жизни, пауза и рекорды:</strong> при ошибке вы теряете жизнь и переигрываете уровень. Каждые 1200 очков дают +1 жизнь (до 5). Прогресс сохраняется автоматически — можно продолжить с любого уровня и записать рекорд при выходе в меню.</div>
           </div>
         </div>
 
