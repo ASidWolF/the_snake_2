@@ -20,6 +20,7 @@ import {
   DIFFICULTY_PROFILES,
 } from '../core/profiles/difficultyProfiles.ts';
 import { I18N_PROFILES } from '../core/profiles/i18nProfile.ts';
+import { DEFAULT_USER_SETTINGS } from '../core/profiles/scoringProfile.ts';
 import type { LeaderboardStore } from '../core/stores/LeaderboardStore.ts';
 import type { SavedRunStore } from '../core/stores/SavedRunStore.ts';
 import type { SettingsStore } from '../core/stores/SettingsStore.ts';
@@ -54,6 +55,37 @@ function isCoarsePointerDevice(): boolean {
     'ontouchstart' in window ||
     navigator.maxTouchPoints > 0
   );
+}
+
+export function formatPlayButtonLabel(params: {
+  readonly language: LanguageKey;
+  readonly selectedDifficulty: DifficultyKey;
+  readonly hasSavedRun: boolean;
+  readonly savedDifficulty: DifficultyKey | null;
+  readonly difficultyExplicitlyPicked: boolean;
+}): string {
+  const t = I18N_PROFILES[params.language];
+  const diffLabel = t.difficultyLabels[params.selectedDifficulty];
+  const isDefaultNormal =
+    params.selectedDifficulty === DEFAULT_USER_SETTINGS.difficulty;
+
+  if (!params.hasSavedRun) {
+    const showDiff = params.difficultyExplicitlyPicked || !isDefaultNormal;
+    return showDiff ? `${t.btnStartGame} (${diffLabel})` : t.btnStartGame;
+  }
+
+  const differsFromSaved =
+    params.savedDifficulty !== null &&
+    params.selectedDifficulty !== params.savedDifficulty;
+  const showDiff =
+    params.difficultyExplicitlyPicked || differsFromSaved || !isDefaultNormal;
+
+  if (!showDiff) {
+    return t.btnNewGameFromL1;
+  }
+  return params.language === 'ru'
+    ? `✨ Новая игра (с 1 уровня • ${diffLabel})`
+    : `✨ New Game (Level 1 • ${diffLabel})`;
 }
 
 export class GameUiExecutor {
@@ -94,6 +126,8 @@ export class GameUiExecutor {
   private renderedOverlayKey = '';
   private lastHudKey = '';
   private lastLivesKey = '';
+  private difficultyExplicitlyPicked = false;
+  private pulsePlayButton = false;
 
   constructor(
     root: HTMLElement,
@@ -261,6 +295,7 @@ export class GameUiExecutor {
       isDeathAnimating ? 'dying' : 'idle',
       this.activeModal,
       settings.difficulty,
+      this.difficultyExplicitlyPicked ? 1 : 0,
       this.leaderboardFilter,
       this.savedRecordRank ?? '',
       snapshot.levelStats.level,
@@ -491,6 +526,16 @@ export class GameUiExecutor {
       `
       : '';
 
+    const playBtnLabel = formatPlayButtonLabel({
+      language: settings.language,
+      selectedDifficulty: settings.difficulty,
+      hasSavedRun: savedRun !== null,
+      savedDifficulty: savedRun?.difficulty ?? null,
+      difficultyExplicitlyPicked: this.difficultyExplicitlyPicked,
+    });
+    const pulseClass = this.pulsePlayButton ? 'btn-pulse' : '';
+    this.pulsePlayButton = false;
+
     const quitBtn = this.storage.quitApp
       ? `<button class="btn btn-ghost" id="btn-quit">${t.btnQuit}</button>`
       : '';
@@ -517,7 +562,7 @@ export class GameUiExecutor {
 
         <div class="btn-stack">
           ${continueBtn}
-          <button class="btn btn-primary" id="btn-play">${savedRun ? t.btnNewGameFromL1 : t.btnStartGame}</button>
+          <button class="btn btn-primary ${pulseClass}" id="btn-play">${playBtnLabel}</button>
           <div class="btn-row">
             <button class="btn" id="btn-leaderboard">${t.btnLeaderboard}</button>
             <button class="btn" id="btn-settings">${t.btnSettings}</button>
@@ -544,7 +589,10 @@ export class GameUiExecutor {
         this.callbacks.onUserGesture();
         this.callbacks.onUiClick();
         const key = btn.dataset.difficulty as DifficultyKey;
+        this.difficultyExplicitlyPicked = true;
+        this.pulsePlayButton = true;
         this.settingsStore.update({ difficulty: key });
+        this.forceOverlayRender();
       });
     });
 
@@ -553,6 +601,7 @@ export class GameUiExecutor {
       if (!latestSaved) return;
       this.callbacks.onUserGesture();
       this.callbacks.onUiClick();
+      this.difficultyExplicitlyPicked = false;
       this.callbacks.onCommand({
         type: 'RESUME_SAVED_RUN',
         savedSnapshot: latestSaved,
@@ -562,6 +611,7 @@ export class GameUiExecutor {
     this.overlayEl.querySelector('#btn-play')!.addEventListener('click', () => {
       this.callbacks.onUserGesture();
       this.callbacks.onUiClick();
+      this.difficultyExplicitlyPicked = false;
       this.callbacks.onCommand({
         type: 'START_NEW_RUN',
         difficulty: this.settingsStore.getSnapshot().difficulty,

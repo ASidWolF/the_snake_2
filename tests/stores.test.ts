@@ -6,6 +6,7 @@ import {
   sanitizePlayerName,
 } from '../src/core/stores/LeaderboardStore.ts';
 import { SettingsStore } from '../src/core/stores/SettingsStore.ts';
+import { formatPlayButtonLabel } from '../src/ui/GameUiExecutor.ts';
 
 function createMemoryStorage(platformName: 'web' | 'desktop' = 'web'): IStorageAdapter {
   const map = new Map<string, unknown>();
@@ -99,5 +100,51 @@ describe('SettingsStore и LeaderboardStore', () => {
     expect(desktopLb.canClear()).toBe(true);
     expect(desktopLb.clear()).toBe(true);
     expect(desktopLb.getEntries()).toHaveLength(0);
+  });
+
+  it('интуитивно подписывает кнопку старта/новой игры при смене сложности (RU и EN)', () => {
+    // Первый запуск на базовой «Нормально» без клика — без скобок сложности
+    expect(
+      formatPlayButtonLabel({
+        language: 'ru',
+        selectedDifficulty: 'normal',
+        hasSavedRun: false,
+        savedDifficulty: null,
+        difficultyExplicitlyPicked: false,
+      })
+    ).toBe('▶ Начать игру');
+
+    // Первый запуск — игрок переключил на «Сложно» -> добавляем в скобках
+    expect(
+      formatPlayButtonLabel({
+        language: 'ru',
+        selectedDifficulty: 'hard',
+        hasSavedRun: false,
+        savedDifficulty: null,
+        difficultyExplicitlyPicked: true,
+      })
+    ).toBe('▶ Начать игру (Сложно)');
+
+    // Активная сохранённая игра на «Нормально», выбрана «Сложно» -> явно видно на кнопке «Новая игра»
+    expect(
+      formatPlayButtonLabel({
+        language: 'ru',
+        selectedDifficulty: 'hard',
+        hasSavedRun: true,
+        savedDifficulty: 'normal',
+        difficultyExplicitlyPicked: true,
+      })
+    ).toBe('✨ Новая игра (с 1 уровня • Сложно)');
+
+    // Тот же сценарий на английском
+    expect(
+      formatPlayButtonLabel({
+        language: 'en',
+        selectedDifficulty: 'easy',
+        hasSavedRun: true,
+        savedDifficulty: 'normal',
+        difficultyExplicitlyPicked: false,
+      })
+    ).toBe('✨ New Game (Level 1 • Easy)');
   });
 });
